@@ -169,9 +169,11 @@ func TestDownloadDefersFMP4Concat(t *testing.T) {
 	defer srv.Close()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out.mp4")
+	var last Progress
 	merge, err := Download(context.Background(), Options{
 		Fetch: httpFetch(srv), URL: srv.URL + "/p.m3u8", Kind: "hls",
 		WorkDir: filepath.Join(dir, "work"), Out: out,
+		OnProgress: func(p Progress) { last = p },
 	})
 	if err != nil || merge == nil {
 		t.Fatalf("下载失败或没有返回拼接: merge=%v err=%v", merge != nil, err)
@@ -185,6 +187,9 @@ func TestDownloadDefersFMP4Concat(t *testing.T) {
 	got, _ := os.ReadFile(out)
 	if string(got) != "....ftypINITAAABBB" {
 		t.Fatalf("拼接结果不对: %q", got)
+	}
+	if !last.Merging || !last.MergeFinalizing || last.MergeDone != 6 || last.MergeTotal != 6 {
+		t.Fatalf("拼接进度没有走到收尾: %+v", last)
 	}
 }
 

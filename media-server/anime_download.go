@@ -461,9 +461,11 @@ type AnimeFailure struct {
 
 // AnimeActiveEp 正在处理的一集（任务表里给前端画每集进度）
 type AnimeActiveEp struct {
-	File     string  `json:"file"`
-	State    string  `json:"state"` // resolving 找地址 | phone 等手机 | running 下载中 | mergewait 等着拼 | merging 拼接中
-	Progress float64 `json:"progress"`
+	File          string  `json:"file"`
+	State         string  `json:"state"` // resolving 找地址 | phone 等手机 | running 下载中 | mergewait 等着拼 | merging 拼接中
+	Progress      float64 `json:"progress"`
+	MergeProgress float64 `json:"mergeProgress"`
+	MergeFinal    bool    `json:"mergeFinal,omitempty"`
 }
 
 // animeDLParallel 同时下几集（和 Kazumi 一样 2 集；每集里再同时拉 3 个分段）。
@@ -478,11 +480,13 @@ var animeDLMergeSlot = make(chan struct{}, 1)
 
 // animeDLSlot 一个工位正在处理的那集
 type animeDLSlot struct {
-	idx   int
-	ep    animeDLEpisode
-	state string
-	frac  float64
-	bytes int64
+	idx        int
+	ep         animeDLEpisode
+	state      string
+	frac       float64
+	mergeFrac  float64
+	mergeFinal bool
+	bytes      int64
 }
 
 // animeDLRun 一个任务跑起来以后的汇总状态（受 animeDL.mu 保护）
@@ -510,7 +514,10 @@ func (r *animeDLRun) sync(x *TorrentTask) {
 	for _, a := range r.active {
 		sum += a.frac * 0.98
 		bytes += a.bytes
-		x.AnimeActive = append(x.AnimeActive, AnimeActiveEp{File: a.ep.File, State: a.state, Progress: a.frac * 100})
+		x.AnimeActive = append(x.AnimeActive, AnimeActiveEp{
+			File: a.ep.File, State: a.state, Progress: a.frac * 100,
+			MergeProgress: a.mergeFrac * 100, MergeFinal: a.mergeFinal,
+		})
 		switch a.state {
 		case "phone":
 			parts, phone = append(parts, "等手机帮忙找"+a.ep.Label+"的视频地址"), true
@@ -519,7 +526,11 @@ func (r *animeDLRun) sync(x *TorrentTask) {
 		case "mergewait":
 			parts = append(parts, a.ep.Label+"下好了，等着拼接")
 		case "merging":
-			parts = append(parts, "正在把"+a.ep.Label+"拼成完整视频")
+			if a.mergeFinal {
+				parts = append(parts, "正在给"+a.ep.Label+"写入视频目录")
+			} else {
+				parts = append(parts, fmt.Sprintf("正在把%s拼成完整视频 · %d%%", a.ep.Label, int(a.mergeFrac*100)))
+			}
 		default:
 			parts = append(parts, fmt.Sprintf("正在下载%s · %d%%", a.ep.Label, int(a.frac*100)))
 		}
@@ -726,8 +737,13 @@ func runAnimeDLTask(t *animeDLTask) {
 						switch {
 						case p.MergeWait:
 							sl.state, sl.frac = "mergewait", 1
+							sl.mergeFrac, sl.mergeFinal = 0, false
 						case p.Merging:
 							sl.state, sl.frac = "merging", 1
+							if p.MergeTotal > 0 {
+								sl.mergeFrac = float64(p.MergeDone) / float64(p.MergeTotal)
+							}
+							sl.mergeFinal = p.MergeFinalizing
 						case p.Total > 0:
 							sl.frac = float64(p.Done) / float64(p.Total)
 						}

@@ -75,7 +75,7 @@ func (b *bufWriteSeeker) Seek(off int64, whence int) (int64, error) {
 }
 
 // remuxTS 把 paths 里的 TS 分段（按顺序）拼成 out（mp4）
-func remuxTS(paths []string, out string) error {
+func remuxTS(paths []string, out string, report func(MergeProgress)) error {
 	f, err := os.Create(out)
 	if err != nil {
 		return err
@@ -99,7 +99,7 @@ func remuxTS(paths []string, out string) error {
 		p, d := clk.fix(pts, dts)
 		writeErr = muxer.Write(track, frame, p, d)
 	}
-	dm := mpeg2.NewTSDemuxer()
+	dm := newTSDemuxer()
 	dm.OnFrame = func(cid mpeg2.TS_STREAM_TYPE, frame []byte, pts, dts uint64) {
 		switch cid {
 		case mpeg2.TS_STREAM_H264, mpeg2.TS_STREAM_H265:
@@ -124,8 +124,10 @@ func remuxTS(paths []string, out string) error {
 	}
 	r := &filesReader{paths: paths}
 	defer r.Close()
-	// 解析库一次只读 188 字节（一个 TS 包），不加缓冲一集就是两百多万次读
-	if err := dm.Input(bufio.NewReaderSize(r, 1<<20)); err != nil {
+	total := mergeBytes(paths)
+	pr := &mergeProgressReader{r: r, total: total, report: report}
+	// 解析器一次只读 188 字节（一个 TS 包），不加缓冲一集就是两百多万次读
+	if err := dm.Input(bufio.NewReaderSize(pr, 1<<20)); err != nil {
 		return errors.New("视频分段解析失败：" + err.Error())
 	}
 	if writeErr != nil {
@@ -134,6 +136,7 @@ func remuxTS(paths []string, out string) error {
 	if !hasV {
 		return errors.New("没认出视频画面（可能是盒子不支持的视频格式）")
 	}
+	reportMerge(report, MergeProgress{Done: total, Total: total, Finalizing: true})
 	if err := muxer.WriteTrailer(); err != nil {
 		return errors.New("拼接视频失败：" + err.Error())
 	}

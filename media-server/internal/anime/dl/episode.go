@@ -24,11 +24,14 @@ type Fetcher func(ctx context.Context, rawURL, rng string) (*http.Response, erro
 
 // Progress 一集的下载进度
 type Progress struct {
-	MergeWait bool  // 下完了，排队等着拼（同一时间只拼一集）
-	Merging   bool  // 下完了，正在拼成 mp4
-	Done      int   // 已下好的分段数（整文件下载时：已下字节）
-	Total     int   // 分段总数（整文件下载时：总字节，0 表示不知道）
-	Bytes     int64 // 已下载的字节数
+	MergeWait       bool  // 下完了，排队等着拼（同一时间只拼一集）
+	Merging         bool  // 下完了，正在拼成 mp4
+	MergeDone       int64 // 拼接已读取的分段字节
+	MergeTotal      int64 // 分段总字节
+	MergeFinalizing bool  // 正在写 MP4 索引并落盘
+	Done            int   // 已下好的分段数（整文件下载时：已下字节）
+	Total           int   // 分段总数（整文件下载时：总字节，0 表示不知道）
+	Bytes           int64 // 已下载的字节数
 }
 
 // Options 一集的下载参数
@@ -241,9 +244,9 @@ func hlsDownload(ctx context.Context, opt Options, body string) (func() error, e
 		p.Merging = true
 		opt.OnProgress(p)
 		if fmp4 {
-			return concatFMP4(ctx, opt, segs[0].Map, paths)
+			return concatFMP4(ctx, opt, segs[0].Map, paths, mergeReporter(opt, p))
 		}
-		return remuxTS(paths, opt.Out)
+		return remuxTS(paths, opt.Out, mergeReporter(opt, p))
 	}, nil
 }
 
@@ -447,7 +450,7 @@ func writeAtomic(dst string, b []byte) error {
 }
 
 // concatFMP4 fMP4 分段：初始化段 + 各分段直接首尾相接就是一个能播的 mp4，不用重新封装
-func concatFMP4(ctx context.Context, opt Options, mapURI string, paths []string) error {
+func concatFMP4(ctx context.Context, opt Options, mapURI string, paths []string, report func(MergeProgress)) error {
 	init, err := fetchAll(ctx, opt.Fetch, mapURI, 16<<20)
 	if err != nil {
 		return fmt.Errorf("取视频头失败：%w", err)
@@ -462,9 +465,12 @@ func concatFMP4(ctx context.Context, opt Options, mapURI string, paths []string)
 	}
 	r := &filesReader{paths: paths}
 	defer r.Close()
-	if _, err := io.Copy(f, r); err != nil {
+	total := mergeBytes(paths)
+	pr := &mergeProgressReader{r: r, total: total, report: report}
+	if _, err := io.CopyBuffer(f, pr, make([]byte, 1<<20)); err != nil {
 		return err
 	}
+	reportMerge(report, MergeProgress{Done: total, Total: total, Finalizing: true})
 	return f.Sync()
 }
 
@@ -565,7 +571,7 @@ func direct(ctx context.Context, opt Options, u string) (func() error, error) {
 			defer release()
 			p.Merging = true
 			opt.OnProgress(p)
-			if err := remuxTS([]string{part}, opt.Out); err != nil {
+			if err := remuxTS([]string{part}, opt.Out, mergeReporter(opt, p)); err != nil {
 				return err
 			}
 			return os.Remove(part)

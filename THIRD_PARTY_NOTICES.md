@@ -14,6 +14,7 @@
 | Material Color Utilities | https://github.com/material-foundation/material-color-utilities | Apache-2.0，Material Eng / Material Foundation | 打包进 `media-server/web/app.js` |
 | Anime4K.js | https://github.com/monyone/Anime4K.js | MIT，Copyright 2023 もにょ～ん | 打包进 `media-server/web/app.js` |
 | Anime4K | https://github.com/bloc97/Anime4K | MIT，Copyright 2019 bloc97 | 着色器经 Anime4K.js 打包进 `media-server/web/app.js` |
+| gomedia | https://github.com/yapingcat/gomedia | MIT，Copyright 2021 caoyaping | TS 解复用器经修改用于 `media-server/internal/anime/dl/ts_demuxer.go`，许可证 `third_party/licenses/gomedia-MIT.txt` |
 
 KazumiRules 的许可证历史显示其初始许可提交即为 MIT。项目旧记录曾误写为 GPL-3.0，公开版已更正；当前规则文件及其 MIT 许可证一并保留。
 

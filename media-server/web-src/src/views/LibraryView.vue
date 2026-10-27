@@ -148,7 +148,7 @@ function dlText(d: DownloadingCard): string {
 
 function activeText(a: NonNullable<DownloadingCard['animeActive']>[number]): string {
   switch (a.state) {
-    case 'merging': return '正在拼成完整视频'
+    case 'merging': return a.mergeFinal ? '正在写入视频目录' : '正在拼成完整视频'
     case 'mergewait': return '已下完，等着拼接'
     case 'resolving': return '正在找视频地址'
     case 'phone': return '等手机帮忙找地址'
@@ -297,10 +297,14 @@ const continueList = computed<ContinueEntry[]>(() => {
                 <div class="dehead">
                   <span class="t-body-m">{{ a.file.replace(/\.mp4$/i, '') }}</span>
                   <span class="t-body-s destate">
-                    {{ activeText(a) }}<template v-if="a.state === 'running'"> · {{ pct(a.progress) }}%</template>
+                    {{ activeText(a) }}
+                    <template v-if="a.state === 'running'"> · {{ pct(a.progress) }}%</template>
+                    <template v-else-if="a.state === 'merging' && !a.mergeFinal"> · {{ pct(a.mergeProgress) }}%</template>
                   </span>
                 </div>
-                <div v-if="a.state === 'running'" class="deprogress"><i :style="{ width: pct(a.progress) + '%' }" /></div>
+                <div v-if="a.state === 'running' || a.state === 'merging'" class="deprogress">
+                  <i :style="{ width: pct(a.state === 'merging' ? a.mergeProgress : a.progress) + '%' }" />
+                </div>
               </div>
               <div v-for="f in d.animeFailures" :key="f.file" class="dep fail">
                 <div class="dehead">

@@ -43,8 +43,11 @@ export function useAnimeDownloads(pb: ReturnType<typeof usePlayback>) {
       // 盒子同时下 2 集：在 animeActive 里的才是正在处理的，其余选中的都在排队
       const a = t.animeActive?.find((x) => x.file === file)
       if (!a) return { kind: 'queued', text: '排队中', pct: 0 }
-      if (a.state === 'merging') return { kind: 'merging', text: '合并中', pct: 100 }
-      if (a.state === 'mergewait') return { kind: 'merging', text: '等合并', pct: 100 }
+      if (a.state === 'merging') {
+        const pct = Math.max(0, Math.min(100, a.mergeProgress || 0))
+        return { kind: 'merging', text: a.mergeFinal ? '收尾中' : '拼接中', pct }
+      }
+      if (a.state === 'mergewait') return { kind: 'merging', text: '等拼接', pct: 0 }
       if (a.state === 'resolving') return { kind: 'resolving', text: '找地址', pct: 0 }
       if (a.state === 'phone') return { kind: 'resolving', text: '等手机', pct: 0 }
       const pct = Math.max(0, Math.min(100, a.progress || 0))
