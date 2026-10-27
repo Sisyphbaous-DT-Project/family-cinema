@@ -49,6 +49,10 @@ async function clearRecords() {
 
 // 番剧下载失败的那几集：重新排给盒子
 const retrying = ref('')
+// 同一个文件只留一条（老版本可能记了好几条一样的失败）
+function failures(t: Task) {
+  return [...new Map((t.animeFailures ?? []).map((f) => [f.file, f])).values()]
+}
 async function retryEp(t: Task, file: string) {
   const key = t.id + '|' + file
   if (retrying.value) return
@@ -100,7 +104,7 @@ async function retryEp(t: Task, file: string) {
           <span v-if="t.peers">{{ t.peers }} 节点</span>
         </div>
         <div v-if="t.animeFailures?.length" class="fails">
-          <div v-for="f in t.animeFailures" :key="f.file" class="failrow">
+          <div v-for="f in failures(t)" :key="f.file" class="failrow">
             <span class="t-body-s">{{ f.file.replace(/\.mp4$/i, '') }}</span>
             <span class="t-body-s failtxt">失败</span>
             <button

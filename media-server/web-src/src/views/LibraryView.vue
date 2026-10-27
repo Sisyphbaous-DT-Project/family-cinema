@@ -102,7 +102,8 @@ watch(serverTasks, (list) => {
       animeFiles: t.animeFiles,
       files: t.files,
       animeFailedFiles: t.animeFailedFiles,
-      animeFailures: t.animeFailures,
+      // 同一个文件只留一条（老版本可能记了好几条一样的失败）
+      animeFailures: [...new Map((t.animeFailures ?? []).map((f) => [f.file, f])).values()],
       animeActive: t.animeActive,
     }))
   downloading.value = cards

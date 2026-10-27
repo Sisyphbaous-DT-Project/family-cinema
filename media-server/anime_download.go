@@ -49,6 +49,8 @@ type animeDLTask struct {
 	queued  bool
 	closing bool          // 已经收尾，不再接收追加的重试集（受 animeDL.mu 保护）
 	wake    chan struct{} // 追加重试集时叫醒正在收尾的下载工位
+	// 已经点了重试、还没轮到开始的集（受 animeDL.mu 保护）：防止连点两次把同一集排两遍
+	retrying map[string]bool
 }
 
 var animeDL struct {
@@ -193,7 +195,7 @@ func newAnimeDLTask(ruleName, ref, title, category, dir string, eps []animeDLEpi
 			AnimeRule: ruleName, AnimeRef: ref, AnimeFiles: files,
 		},
 		rule: ruleName, ref: ref, eps: eps, ctx: ctx, cancel: cancel, queued: true,
-		wake: make(chan struct{}, 1),
+		wake: make(chan struct{}, 1), retrying: map[string]bool{},
 	}
 }
 
@@ -227,11 +229,14 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 	for _, f := range t.info.AnimeFailedFiles {
 		failed[f] = true
 	}
+	// 同一个文件只取一份：老版本重试留下的重复项还在 t.eps 里，不能照着再抄一遍
 	var eps []animeDLEpisode
+	uniq := make(map[string]bool, len(t.info.AnimeFailedFiles))
 	for _, ep := range t.eps {
-		if !failed[ep.File] || (len(want) > 0 && !want[ep.File]) {
+		if !failed[ep.File] || (len(want) > 0 && !want[ep.File]) || uniq[ep.File] {
 			continue
 		}
+		uniq[ep.File] = true
 		eps = append(eps, ep)
 	}
 	if len(eps) == 0 {
@@ -241,20 +246,35 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 	}
 	name, dir := t.info.Name, t.info.TargetDir
 	if t.info.Status == "running" && !t.closing {
+		// 已经在下载/等着拼/刚点过重试的集不再排第二遍，否则同一集会被同时下好几份
+		busy := make(map[string]bool, len(t.info.AnimeActive))
+		for _, a := range t.info.AnimeActive {
+			busy[a.File] = true
+		}
 		retried := make(map[string]bool, len(eps))
+		queued := 0
 		for _, ep := range eps {
-			t.eps = append(t.eps, ep)
-			t.info.AnimeFiles = append(t.info.AnimeFiles, ep.File)
 			retried[ep.File] = true
+			if busy[ep.File] || t.retrying[ep.File] {
+				continue
+			}
+			t.retrying[ep.File] = true
+			t.eps = append(t.eps, ep)
+			queued++
 		}
 		t.info.AnimeFailedFiles = slices.DeleteFunc(t.info.AnimeFailedFiles, func(f string) bool { return retried[f] })
 		t.info.AnimeFailures = slices.DeleteFunc(t.info.AnimeFailures, func(f AnimeFailure) bool { return retried[f.File] })
+		if queued == 0 {
+			animeDL.mu.Unlock()
+			writeAnimeDLError(w, "这一集已经在队列里了，等它下完就行")
+			return
+		}
 		select {
 		case t.wake <- struct{}{}:
 		default:
 		}
 		animeDL.mu.Unlock()
-		animeDLJSON(w, map[string]any{"ok": true, "id": id, "queued": len(eps), "dir": name})
+		animeDLJSON(w, map[string]any{"ok": true, "id": id, "queued": queued, "dir": name})
 		return
 	}
 	ruleName, ref, category := t.rule, t.ref, t.info.Category
@@ -477,7 +497,11 @@ type animeDLRun struct {
 
 // sync 把各工位的状态汇总进任务表那份（调用方持有 animeDL.mu）
 func (r *animeDLRun) sync(x *TorrentTask) {
-	total := len(r.t.eps)
+	// 分母用"这部一共要下几集"（AnimeFiles），重试追加的只是同一集的另一份排队记录，不能把总集数算多
+	total := len(x.AnimeFiles)
+	if total == 0 {
+		total = len(r.t.eps)
+	}
 	sort.Slice(r.active, func(i, j int) bool { return r.active[i].idx < r.active[j].idx })
 	sum, bytes := float64(r.finished), r.bytesBase
 	x.AnimeActive = x.AnimeActive[:0]
@@ -559,7 +583,11 @@ func runAnimeDLTask(t *animeDLTask) {
 		run.set(func() {
 			run.finished++
 			run.active = slices.DeleteFunc(run.active, func(a *animeDLSlot) bool { return a == sl })
-			t.info.AnimeFailedFiles = append(t.info.AnimeFailedFiles, sl.ep.File)
+			if !slices.Contains(t.info.AnimeFailedFiles, sl.ep.File) {
+				t.info.AnimeFailedFiles = append(t.info.AnimeFailedFiles, sl.ep.File)
+			}
+			// 同一个文件只留最新一条原因，免得前端画出好几行一模一样的"失败"
+			t.info.AnimeFailures = slices.DeleteFunc(t.info.AnimeFailures, func(f AnimeFailure) bool { return f.File == sl.ep.File })
 			t.info.AnimeFailures = append(t.info.AnimeFailures, AnimeFailure{File: sl.ep.File, Message: msg})
 		})
 	}
@@ -619,7 +647,9 @@ func runAnimeDLTask(t *animeDLTask) {
 			run.finished++
 			run.bytesBase += size
 			run.active = slices.DeleteFunc(run.active, func(a *animeDLSlot) bool { return a == sl })
-			t.info.Files = append(t.info.Files, sl.ep.File)
+			if !slices.Contains(t.info.Files, sl.ep.File) {
+				t.info.Files = append(t.info.Files, sl.ep.File)
+			}
 		})
 		animeDLScanMu.Lock()
 		ScanLibrary()
@@ -656,7 +686,22 @@ func runAnimeDLTask(t *animeDLTask) {
 			}
 			animeDL.mu.Lock()
 			ep := t.eps[i]
+			// 轮到它了：从"已经排了重试"的名单里拿掉，之后由 Active 状态接管
+			delete(t.retrying, ep.File)
 			animeDL.mu.Unlock()
+			// 文件夹里已经有这一集（重试前其实下好了，或者老版本排过重复项）：当成完成，不再下一遍
+			if st, statErr := os.Stat(filepath.Join(t.info.TargetDir, ep.File)); statErr == nil && st.Size() > 0 {
+				run.set(func() {
+					run.finished++
+					run.bytesBase += st.Size()
+					if !slices.Contains(t.info.Files, ep.File) {
+						t.info.Files = append(t.info.Files, ep.File)
+					}
+					t.info.AnimeFailedFiles = slices.DeleteFunc(t.info.AnimeFailedFiles, func(f string) bool { return f == ep.File })
+					t.info.AnimeFailures = slices.DeleteFunc(t.info.AnimeFailures, func(f AnimeFailure) bool { return f.File == ep.File })
+				})
+				continue
+			}
 			sl := &animeDLSlot{idx: i, ep: ep, state: "resolving"}
 			run.set(func() { run.active = append(run.active, sl) })
 			target, kind, err := resolveForDownload(t, ep, func() { run.set(func() { sl.state = "phone" }) })
