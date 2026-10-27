@@ -1,0 +1,65 @@
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.example
+.token
+**/config.json
+**/pansou.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+key.properties
+local.properties
+id_rsa*
+id_ed25519*
+*_rsa
+*_ed25519
+*private*key*
+secrets.xml
+
+# Logs, caches and runtime data
+*.log
+logs/
+run/
+.cache/
+__pycache__/
+*.py[cod]
+.torrent-cache/
+anime-cache/
+*.uploading
+
+# JavaScript / frontend
+node_modules/
+.vite/
+
+# Android / Gradle
+.gradle/
+**/build/
+.idea/
+*.iml
+*.apk
+*.aab
+
+# Go binaries and historical build outputs
+media-server-armv7
+rescue-server-armv7
+pansou-armv7
+/media-server/media-server
+/media-server/media-server.exe
+/mikan-proxy/mikan-proxy
+/mikan-proxy/mikan-proxy.exe
+/rescue-server/rescue-server
+/rescue-server/rescue-server.exe
+/pansou/pansou
+/pansou/pansou.exe
+media-server-v2
+tmpbuild/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.claude/

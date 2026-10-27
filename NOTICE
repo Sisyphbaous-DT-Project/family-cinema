@@ -1,0 +1,18 @@
+Family Cinema
+Copyright 2026 C₂₂H₂₅NO₆
+
+Licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+This project contains third-party material with separate copyright and
+license terms. In particular:
+
+- Community playback rules from KazumiRules, Copyright 2024 Predidit, MIT.
+- An ARMv7/Android patch for PanSou, whose upstream is Copyright 2025 fish2018, MIT.
+- Bundled Vue and Vue Router runtime code, MIT.
+- Bundled hls.js and Material Color Utilities code, Apache-2.0.
+  hls.js also carries the Brightcove copyright notice in its upstream license.
+
+These components are not relicensed under the project's Apache-2.0 terms.
+Their original notices are retained in THIRD_PARTY_NOTICES.md,
+media-server/rules/LICENSE and third_party/licenses/.

@@ -1,0 +1,34 @@
+{
+  "port": "8088",
+  "movieRoot": "/mnt/sda/sda1/电影电视剧",
+  "seriesRoot": "/mnt/sda/sda1/番剧",
+  "downloadDir": "/mnt/sda/sda1/下载",
+  "cacheDir": "/mnt/sda/sda1/.torrent-cache",
+  "listenAddr": "",
+  "caFile": "",
+  "proxy": {
+    "base": "",
+    "token": ""
+  },
+  "sources": {
+    "dytt8899": true,
+    "dygangs": true,
+    "mp4z6": true,
+    "mikan": false
+  },
+  "searchTTL": 300,
+  "speedtest": 8,
+  "btPort": 51413,
+  "btNoDHT": false,
+  "btDebug": false,
+  "btUploadKBs": 2048,
+  "btMaxConns": 80,
+  "btUPnP": true,
+  "anime": {
+    "enabled": true,
+    "rulesDir": "",
+    "cacheDir": "",
+    "imgCacheMB": 300,
+    "bangumiUA": ""
+  }
+}

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f9faf4">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>盒子工具箱 · 家庭影院</title>
+  <link rel="stylesheet" href="/toolbox.css?v=20261015-md3">
+  <script src="/toolbox.js?v=20261015-md3" defer></script>
+</head>
+<body>
+  <!-- 图标沿用主前端的 Material Icons 路径，全部随救援服务打包。 -->
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-tv" viewBox="0 0 24 24"><path d="M21 6h-7.59l3.29-3.29L16 2l-4 4-4-4-.71.71L10.59 6H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 14H3V8h18v12z"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <span class="brand-icon"><svg class="icon" aria-hidden="true"><use href="#i-tv"/></svg></span>
+      <div class="brand"><h1>盒子工具箱</h1><p>家庭影院 · 日常维护</p></div>
+      <button class="icon-button" id="btn-theme" type="button" data-action="theme" aria-label="外观：跟随系统，点击切换" title="外观：跟随系统">
+        <svg class="icon" aria-hidden="true"><use href="#i-palette"/></svg>
+      </button>
+      <a class="button outlined cinema-link" id="cinema-link" href="http://box.local:8088/">打开影院</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="overview" aria-labelledby="overview-title">
+      <div class="section-heading"><h2 id="overview-title">当前状态</h2><span id="last-update">正在连接盒子…</span></div>
+      <div class="card">
+        <div class="card-heading"><div><h3>家里的盒子</h3><p class="supporting">服务、片库和硬盘，在这里一起查看</p></div><span class="badge" id="connection">连接中</span></div>
+        <div class="status-grid">
+          <div class="metric"><span class="metric-label">媒体服务</span><strong id="st-svc">检测中</strong><span class="metric-note" id="st-pid">请稍等</span></div>
+          <div class="metric"><span class="metric-label">影院网页</span><strong id="st-http">检测中</strong><span class="metric-note">播放与浏览片库</span></div>
+          <div class="metric"><span class="metric-label">媒体库</span><strong id="st-lib">—</strong><span class="metric-note" id="st-lib-note">盒子里保存的片子</span></div>
+        </div>
+        <div class="device-details">
+          <div><svg class="icon" aria-hidden="true"><use href="#i-wifi"/></svg><p id="st-ip">正在读取盒子地址…</p></div>
+          <div><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg><p id="st-mount">正在查看硬盘…</p></div>
+        </div>
+        <div class="diagnose-entry"><div><h3>遇到问题，先做一次体检</h3><p class="supporting">逐项检查，并告诉你该点哪个按钮</p></div><button class="button filled" id="btn-diag" type="button" data-action="diagnose"><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span data-label>一键体检</span></button></div>
+        <div id="diag-results" class="hidden" aria-live="polite">
+          <div class="diag-summary" id="diag-sum"></div>
+          <ul class="diag-list" id="diag-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <div class="modules">
+      <section aria-labelledby="service-title">
+        <div class="section-heading"><h2 id="service-title">服务控制</h2></div>
+        <div class="card">
+          <div class="module-heading"><span class="module-icon"><svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg></span><div><h3>让影院正常运行</h3><p class="supporting">网页打不开时，可以先启动服务</p></div></div>
+          <div class="buttons">
+            <button class="button filled" id="btn-start" type="button" data-action="start"><span data-label>启动服务</span></button>
+            <button class="button tonal" id="btn-restart" type="button" data-action="restart"><span data-label>重启服务</span></button>
+            <button class="button outlined" id="btn-logs" type="button" data-action="logs"><span data-label>查看日志</span></button>
+            <button class="button danger" id="btn-stop" type="button" data-action="stop"><span data-label>停止服务</span></button>
+          </div>
+          <p class="note">重启或停止服务会打断播放和下载。</p>
+        </div>
+      </section>
+
+      <section aria-labelledby="disk-title">
+        <div class="section-heading"><h2 id="disk-title">片库与硬盘</h2></div>
+        <div class="card">
+          <div class="module-heading"><span class="module-icon"><svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg></span><div><h3>找回片子，查看空间</h3><p class="supporting">刚传入视频，或拔插过硬盘时用</p></div></div>
+          <div class="buttons">
+            <button class="button tonal" id="btn-scan" type="button" data-action="scan"><span data-label>刷新片子列表</span></button>
+            <button class="button outlined" id="btn-disk" type="button" data-action="disk"><span data-label>查看磁盘占用</span></button>
+            <button class="button outlined wide" id="btn-repair" type="button" data-action="repair"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg><span data-label>拔插硬盘后一键修复</span></button>
+          </div>
+          <div class="progress hidden" id="repair-prog" role="status"><span class="spinner"></span><span>正在修复，请保持页面打开…</span></div>
+          <pre class="log hidden" id="repair-log" aria-label="硬盘修复进度"></pre>
+          <pre class="log hidden" id="disk-log" aria-label="磁盘占用"></pre>
+        </div>
+      </section>
+
+      <section aria-labelledby="network-title">
+        <div class="section-heading"><h2 id="network-title">盒子地址</h2></div>
+        <div class="card">
+          <div class="module-heading"><span class="module-icon"><svg class="icon" aria-hidden="true"><use href="#i-wifi"/></svg></span><div><h3>找不到盒子时</h3><p class="supporting">地址变了，可以搜索或恢复常用地址</p></div></div>
+          <div class="buttons">
+            <button class="button tonal" id="btn-find" type="button" data-action="find"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span data-label>自动找盒子</span></button>
+            <button class="button outlined" id="btn-fixip" type="button" data-action="fixip" disabled><span data-label>正在读取地址…</span></button>
+          </div>
+          <p class="note" id="alias-note">正在检查常用地址…</p>
+          <div class="result-panel hidden" id="found-hosts" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section aria-labelledby="tasks-title">
+        <div class="section-heading"><h2 id="tasks-title">下载与缓存</h2></div>
+        <div class="card">
+          <div class="module-heading"><span class="module-icon"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg></span><div><h3>看看盒子正在下载什么</h3><p class="supporting">这里管理的是盒子上的下载缓存</p></div></div>
+          <div class="buttons">
+            <button class="button tonal" id="btn-tasks" type="button" data-action="tasks"><span data-label>查看下载任务</span></button>
+            <button class="button danger" id="btn-clear" type="button" data-action="clear"><span data-label>清空下载缓存</span></button>
+          </div>
+          <ul class="tasks hidden" id="task-list" aria-live="polite"></ul>
+        </div>
+      </section>
+    </div>
+
+    <section class="logs-section" id="logs-section" aria-labelledby="logs-title">
+      <div class="section-heading"><h2 id="logs-title">运行日志</h2><span>最近 120 行</span></div>
+      <div class="card"><div class="module-heading"><span class="module-icon"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg></span><div><h3>操作记录与问题线索</h3><p class="supporting">点「查看日志」后，这里会显示详细记录</p></div></div><pre class="log" id="main-log">还没有加载日志</pre></div>
+    </section>
+    <footer>家庭影院 · 盒子工具箱<span>独立运行，影院网页打不开时也能用</span></footer>
+  </main>
+
+  <div class="snackbar" id="toast" role="status" aria-live="polite"></div>
+  <div class="dialog-root hidden" id="confirm-root">
+    <div class="scrim" data-dismiss="true"></div>
+    <section class="dialog card" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description" tabindex="-1">
+      <h2 id="confirm-title"></h2><p id="confirm-description"></p>
+      <div class="dialog-actions"><button class="button text" type="button" id="confirm-cancel">先不操作</button><button class="button filled" type="button" id="confirm-ok">确定</button></div>
+    </section>
+  </div>
+</body>
+</html>

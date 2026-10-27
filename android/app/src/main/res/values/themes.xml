@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与网页默认主题（青草绿、浅色）的页面底色一致，打开 App 时不闪色。
+         网页加载后会通过 setSystemBars 按当前主题/深浅色重新刷，并记下来，下次打开直接用记下的颜色 -->
+    <style name="Theme.FamilyCinema" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#f9faf4</item>
+        <item name="android:statusBarColor">#f9faf4</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#f9faf4</item>
+    </style>
+</resources>

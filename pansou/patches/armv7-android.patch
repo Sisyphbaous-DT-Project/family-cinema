@@ -1,0 +1,200 @@
+diff --git a/android_dns.go b/android_dns.go
+new file mode 100644
+index 0000000..d790afa
+--- /dev/null
++++ b/android_dns.go
+@@ -0,0 +1,28 @@
++package main
++
++import (
++	"context"
++	"net"
++	"os"
++	"time"
++)
++
++// 安卓机顶盒没有 /etc/resolv.conf，Go 自带的解析器找不到 DNS 服务器；
++// 这种情况下改用公共 DNS（与 media-server 的 dns.go 同一套）。
++func init() {
++	if _, err := os.Stat("/etc/resolv.conf"); err == nil {
++		return
++	}
++	net.DefaultResolver = &net.Resolver{
++		PreferGo: true,
++		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
++			d := &net.Dialer{Timeout: 4 * time.Second}
++			for _, s := range []string{"223.5.5.5:53", "119.29.29.29:53", "114.114.114.114:53"} {
++				if c, err := d.DialContext(ctx, "udp", s); err == nil {
++					return c, nil
++				}
++			}
++			return d.DialContext(ctx, network, address)
++		},
++	}
++}
+diff --git a/util/cache/global_buffer_manager.go b/util/cache/global_buffer_manager.go
+index 2725ff8..ac4393d 100644
+--- a/util/cache/global_buffer_manager.go
++++ b/util/cache/global_buffer_manager.go
+@@ -86,6 +86,8 @@ type GlobalBufferManager struct {
+ 
+ // GlobalBufferStats 全局缓冲区统计
+ type GlobalBufferStats struct {
++	MemoryUsage int64 // 内存使用量（原子操作，放第一个：32 位 ARM 对齐）
++
+ 	// 缓冲区统计
+ 	ActiveBuffers         int64 // 活跃缓冲区数量
+ 	TotalBuffersCreated   int64 // 总创建缓冲区数量
+@@ -104,7 +106,6 @@ type GlobalBufferStats struct {
+ 	// 性能统计
+ 	LastCleanupTime  time.Time     // 最后清理时间
+ 	CleanupFrequency time.Duration // 清理频率
+-	MemoryUsage      int64         // 内存使用量
+ }
+ 
+ // NewGlobalBufferManager 创建全局缓冲区管理器
+diff --git a/util/cache/sharded_memory_cache.go b/util/cache/sharded_memory_cache.go
+index 4007caf..a52bb71 100644
+--- a/util/cache/sharded_memory_cache.go
++++ b/util/cache/sharded_memory_cache.go
+@@ -28,18 +28,18 @@ type cleanupTarget interface {
+ 
+ // 分片内存缓存项
+ type shardedMemoryCacheItem struct {
++	lastUsed     int64 // 使用原子操作的时间戳（放第一个：32 位 ARM 上只有开头保证 8 字节对齐）
+ 	data         []byte
+ 	expiry       time.Time
+-	lastUsed     int64 // 使用原子操作的时间戳
+ 	lastModified time.Time
+ 	size         int
+ }
+ 
+ // 单个分片
+ type memoryCacheShard struct {
++	currSize int64 // 原子操作，放第一个（32 位 ARM 对齐）
+ 	items    map[string]*shardedMemoryCacheItem
+ 	mutex    sync.RWMutex
+-	currSize int64
+ }
+ 
+ // 分片内存缓存
+diff --git a/util/json/adapter.go b/util/json/adapter.go
+index ac6dc39..e656324 100644
+--- a/util/json/adapter.go
++++ b/util/json/adapter.go
+@@ -3,37 +3,25 @@ package json
+ import (
+ 	stdjson "encoding/json"
+ 	"io"
+-
+-	"github.com/bytedance/sonic"
+ )
+ 
+-// 本文件补齐调用方需要、但原先没有暴露的能力。
+-//
+-// 项目约定：业务代码一律使用 pansou/util/json，不要直接 import encoding/json，
+-// 以保证序列化行为统一由这里的 sonic 配置决定（见 json.go 的 init：
+-// UseNumber/EscapeHTML/SortMapKeys）。但 RawMessage、Number、NewDecoder 这些是
+-// 业务代码实际会用到的类型与构造函数，封装里没有就会逼着调用方绕开封装，
+-// 所以在这里补齐，让"只用封装"这条约定在全部调用点都能成立。
+-
+-// Decoder 是 sonic 的解码器。
+-// 注意 sonic v1.14 的 NewDecoder 返回**值**而不是指针（与 encoding/json 不同）。
+-type Decoder = sonic.Decoder
+-
+-// Encoder 是 sonic 的编码器。
+-type Encoder = sonic.Encoder
+-
+-// RawMessage 与 encoding/json 的同名类型语义一致，sonic 原生支持对它编解码。
++type Decoder = *stdjson.Decoder
++type Encoder = *stdjson.Encoder
+ type RawMessage = stdjson.RawMessage
+-
+-// Number 与 encoding/json 的同名类型一致，且与 API 的 UseNumber: true 配置配套。
+ type Number = stdjson.Number
+ 
+-// NewDecoder 返回一个从 r 读取的解码器。
+ func NewDecoder(r io.Reader) Decoder {
+-	return API.NewDecoder(r)
++	d := stdjson.NewDecoder(r)
++	d.UseNumber()
++	return d
+ }
+ 
+-// NewEncoder 返回一个写入 w 的编码器。
+-func NewEncoder(w io.Writer) Encoder {
+-	return API.NewEncoder(w)
+-}
++func NewEncoder(w io.Writer) Encoder { return stdjson.NewEncoder(w) }
++
++type apiCompat struct{}
++
++func (apiCompat) NewEncoder(w io.Writer) Encoder { return NewEncoder(w) }
++func (apiCompat) NewDecoder(r io.Reader) Decoder { return NewDecoder(r) }
++
++// API 兼容原来 sonic 的全局实例用法（cache 包里用到）
++var API apiCompat
+diff --git a/util/json/json.go b/util/json/json.go
+index 4baa1cc..adbf5a8 100644
+--- a/util/json/json.go
++++ b/util/json/json.go
+@@ -1,48 +1,27 @@
+ package json
+ 
+ import (
+-	"github.com/bytedance/sonic"
++	"bytes"
++	stdjson "encoding/json"
+ )
+ 
+-// API是sonic的全局配置实例
+-var API = sonic.ConfigDefault
++// 32 位 ARM 试编译：sonic 不支持 32 位，换成标准库，行为对齐原配置（UseNumber、EscapeHTML）。
+ 
+-// 初始化sonic配置
+-func init() {
+-	// 根据需要配置sonic选项
+-	API = sonic.Config{
+-		UseNumber:   true,
+-		EscapeHTML:  true,
+-		SortMapKeys: false, // 生产环境设为false提高性能
+-	}.Froze()
+-}
+-
+-// Marshal 使用sonic序列化对象到JSON
+-func Marshal(v interface{}) ([]byte, error) {
+-	return API.Marshal(v)
+-}
++func Marshal(v interface{}) ([]byte, error) { return stdjson.Marshal(v) }
+ 
+-// Unmarshal 使用sonic反序列化JSON到对象
+ func Unmarshal(data []byte, v interface{}) error {
+-	return API.Unmarshal(data, v)
++	d := stdjson.NewDecoder(bytes.NewReader(data))
++	d.UseNumber()
++	return d.Decode(v)
+ }
+ 
+-// MarshalString 序列化对象到JSON字符串
+ func MarshalString(v interface{}) (string, error) {
+-	bytes, err := API.Marshal(v)
+-	if err != nil {
+-		return "", err
+-	}
+-	return string(bytes), nil
++	b, err := stdjson.Marshal(v)
++	return string(b), err
+ }
+ 
+-// UnmarshalString 反序列化JSON字符串到对象
+-func UnmarshalString(str string, v interface{}) error {
+-	return API.Unmarshal([]byte(str), v)
+-}
++func UnmarshalString(str string, v interface{}) error { return Unmarshal([]byte(str), v) }
+ 
+-// MarshalIndent 序列化对象到格式化的JSON
+ func MarshalIndent(v interface{}, prefix, indent string) ([]byte, error) {
+-	// 使用sonic的格式化功能
+-	return API.MarshalIndent(v, prefix, indent)
++	return stdjson.MarshalIndent(v, prefix, indent)
+ }

@@ -1,0 +1,2 @@
+规则来自 https://github.com/Predidit/KazumiRules （MIT），由 tools/sync_rules.py 同步。
+Copyright (c) 2024 Predidit。许可证全文见同目录 LICENSE。
