@@ -243,6 +243,7 @@ const playerTitle = computed(() =>
             <VideoPlayer
               :src="epSrc"
               kind="mp4"
+              :series-key="`local:${id}`"
               :title="playerTitle"
               :start-at="startAt"
               :message="error"

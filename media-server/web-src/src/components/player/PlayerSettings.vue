@@ -3,12 +3,17 @@
 //  - floating（不全屏）：搬到 body，悬浮在屏幕正中间，和 App 其它卡片一个颜色（播放器框太小，关在里面会被切掉）
 //  - 全屏：必须留在播放器 .stage 里面（全屏时只显示 .stage 里的东西），深色半透明，悬浮在画面右边
 import { playerPrefs, resetPlayerPrefs, type PlayerPrefs } from '../../composables/playerPrefs'
+import type { SuperResolutionMode } from '../../composables/useSuperResolution'
 import { toast } from '../../composables/snackbar'
 import Switch from '../m3/Switch.vue'
 import IconButton from '../m3/IconButton.vue'
 
-defineProps<{ floating?: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'pip'): void }>()
+defineProps<{ floating?: boolean; srMode: SuperResolutionMode }>()
+const emit = defineEmits<{
+  (e: 'close'): void
+  (e: 'pip'): void
+  (e: 'update:srMode', mode: SuperResolutionMode): void
+}>()
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
 const FITS: { value: PlayerPrefs['fit']; label: string }[] = [
@@ -16,10 +21,16 @@ const FITS: { value: PlayerPrefs['fit']; label: string }[] = [
   { value: 'cover', label: '填充裁切' },
   { value: 'fill', label: '拉伸铺满' },
 ]
+const SR_MODES: { value: SuperResolutionMode; label: string }[] = [
+  { value: 'off', label: '关闭' },
+  { value: 'efficiency', label: '效率' },
+  { value: 'quality', label: '质量' },
+]
 const canPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document && document.pictureInPictureEnabled
 
 function reset() {
   resetPlayerPrefs()
+  emit('update:srMode', 'off')
   toast('已恢复默认设置')
 }
 </script>
@@ -60,6 +71,22 @@ function reset() {
               @click="playerPrefs.fit = f.value"
             >{{ f.label }}</button>
           </div>
+        </div>
+
+        <div class="group">
+          <div class="glabel t-label-l">超分辨率</div>
+          <div class="chips">
+            <button
+              v-for="s in SR_MODES"
+              :key="s.value"
+              v-ripple
+              class="chip t-label-l"
+              :class="{ on: srMode === s.value }"
+              type="button"
+              @click="emit('update:srMode', s.value)"
+            >{{ s.label }}</button>
+          </div>
+          <div class="srhint t-body-s">只记住这部片子的选择。低清番剧效果更明显；卡顿就换效率或关闭。</div>
         </div>
 
         <div class="group">
@@ -154,6 +181,7 @@ function reset() {
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { padding: 7px 14px; border-radius: var(--md-shape-md); background: var(--ps-chip); color: var(--ps-fg); }
 .chip.on { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.srhint { margin-top: 8px; line-height: 1.5; opacity: 0.65; }
 input[type='range'] { width: 100%; accent-color: var(--ps-accent); height: 24px; }
 .srow { display: flex; align-items: center; justify-content: space-between; min-height: 36px; }
 .foot { display: flex; gap: 12px; justify-content: flex-end; margin-top: 4px; }

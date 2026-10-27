@@ -2,8 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import Hls from 'hls.js/light' // 精简版：去掉字幕/多音轨/DRM，动漫用不到，体积小一半
-import { acquireWakeLock, hasBridge, lockLandscape, releaseWakeLock, unlockOrientation } from '../composables/bridge'
+import { acquireWakeLock, bjson, hasBridge, lockLandscape, releaseWakeLock, unlockOrientation } from '../composables/bridge'
 import { playerPrefs, videoFilter } from '../composables/playerPrefs'
+import { useSuperResolution } from '../composables/useSuperResolution'
 import { usePlayerGestures } from '../composables/usePlayerGestures'
 import { toast } from '../composables/snackbar'
 import IconButton from './m3/IconButton.vue'
@@ -15,6 +16,8 @@ const props = defineProps<{
   /** 播放地址（盒子播放代理的相对地址）；为空时只显示占位/提示 */
   src?: string
   kind?: 'hls' | 'mp4'
+  /** 按作品记住超分档位，换集不换键 */
+  seriesKey: string
   title?: string
   /** 起播位置（秒） */
   startAt?: number
@@ -36,6 +39,7 @@ const emit = defineEmits<{
 
 const stage = ref<HTMLElement>()
 const video = ref<HTMLVideoElement>()
+const srCanvas = ref<HTMLCanvasElement>()
 const playing = ref(false)
 const buffering = ref(false)
 const cur = ref(0)
@@ -46,6 +50,16 @@ const showSpeed = ref(false)
 const showSettings = ref(false)
 const isFull = ref(false)
 const flashText = ref('') // 画面上方一闪而过的小提示（快进几秒、改了倍速）
+const {
+  mode: srMode,
+  active: srActive,
+  setMode: setSrMode,
+  sync: syncSr,
+  pause: pauseSr,
+  resume: resumeSr,
+  stop: stopSr,
+  contextLost: onSrContextLost,
+} = useSuperResolution(video, srCanvas, () => props.seriesKey)
 
 let hls: Hls | null = null
 let hideTimer: ReturnType<typeof setTimeout> | undefined
@@ -64,6 +78,7 @@ let rotatedByUs = false
 
 // ---------- 装载视频 ----------
 function destroy() {
+  stopSr()
   hls?.destroy()
   hls = null
   const v = video.value
@@ -81,6 +96,9 @@ function load() {
   recoverTries = 0
   const v = video.value
   if (!v || !props.src) return
+  // App 1.9 起本地服务支持受限 CORS；旧 App 不强制跨域，避免热更新后普通缓存播放被拦。
+  const appCode = bjson<{ code?: number }>((b) => b.getVersion?.(), {}).code ?? 0
+  v.crossOrigin = appCode >= 10 ? 'anonymous' : null
   applyPrefs()
   const startAt = playerPrefs.resume && props.startAt && props.startAt > 3 ? props.startAt : 0
   posReady = !startAt
@@ -123,16 +141,19 @@ function load() {
 
 watch(() => props.src, load)
 
-// ---------- 播放偏好应用到 video 元素 ----------
+// ---------- 播放偏好应用到原视频和超分画布 ----------
 function applyPrefs() {
   const v = video.value
   if (!v) return
   v.playbackRate = playerPrefs.rate
   v.volume = playerPrefs.vol
   v.loop = playerPrefs.loop
-  v.style.objectFit = playerPrefs.fit
-  v.style.filter = videoFilter(playerPrefs)
-  v.style.transform = playerPrefs.mirror ? 'scaleX(-1)' : ''
+  for (const el of [v, srCanvas.value]) {
+    if (!el) continue
+    el.style.objectFit = playerPrefs.fit
+    el.style.filter = videoFilter(playerPrefs)
+    el.style.transform = playerPrefs.mirror ? 'scaleX(-1)' : ''
+  }
 }
 watch(playerPrefs, applyPrefs)
 
@@ -155,8 +176,16 @@ function onTime() {
     saveNow()
   }
 }
+function onPlay() {
+  playing.value = true
+  resumeSr()
+}
+function onLoadedData() {
+  syncSr()
+}
 function onPause() {
   playing.value = false
+  pauseSr()
   saveNow()
   poke()
 }
@@ -164,8 +193,17 @@ function onEnded() {
   saveNow()
   emit('ended', cur.value, dur.value)
 }
+function onVisibility() {
+  if (document.hidden) {
+    pauseSr()
+    saveNow()
+  } else if (playing.value) {
+    resumeSr()
+  }
+}
 // 切后台/关页时立刻存一次进度，避免最多丢 5 秒
 function onPageHide() {
+  pauseSr()
   saveNow()
 }
 
@@ -331,6 +369,7 @@ function togglePip() {
   if (doc.pictureInPictureElement) {
     ;(document as unknown as { exitPictureInPicture: () => Promise<void> }).exitPictureInPicture().catch(() => {})
   } else {
+    if (srActive.value) toast('画中画里使用普通画质')
     ;(v as unknown as { requestPictureInPicture: () => Promise<void> }).requestPictureInPicture().catch(() => {
       toast('无法进入画中画')
     })
@@ -364,7 +403,7 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', onFsChange)
   document.addEventListener('webkitfullscreenchange', onFsChange)
   window.addEventListener('keydown', onKey)
-  document.addEventListener('visibilitychange', onPageHide)
+  document.addEventListener('visibilitychange', onVisibility)
   window.addEventListener('pagehide', onPageHide)
   stage.value?.addEventListener('touchmove', blockScroll, { passive: false })
   acquireWakeLock() // 播放页打开期间保持屏幕常亮（暂停也算），离开页面立即恢复
@@ -379,7 +418,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFsChange)
   document.removeEventListener('webkitfullscreenchange', onFsChange)
   window.removeEventListener('keydown', onKey)
-  document.removeEventListener('visibilitychange', onPageHide)
+  document.removeEventListener('visibilitychange', onVisibility)
   window.removeEventListener('pagehide', onPageHide)
   stage.value?.removeEventListener('touchmove', blockScroll)
   clearTimeout(hideTimer)
@@ -419,11 +458,13 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
     @pointercancel="onCancel"
     @pointerleave="onLeave"
   >
-    <video ref="video" class="video" playsinline webkit-playsinline preload="auto"
-      @play="playing = true" @playing="playing = true; buffering = false" @pause="onPause"
+    <video ref="video" class="video" :class="{ 'sr-source': srActive }"
+      playsinline webkit-playsinline preload="auto"
+      @play="onPlay" @playing="playing = true; buffering = false" @pause="onPause" @loadeddata="onLoadedData"
       @waiting="buffering = true" @canplay="buffering = false" @seeking="buffering = true" @seeked="buffering = false"
       @timeupdate="onTime" @durationchange="onTime" @progress="onTime" @ended="onEnded"
       @contextmenu.prevent />
+    <canvas v-show="srActive" ref="srCanvas" class="video sr-output" @webglcontextlost.prevent="onSrContextLost" />
 
     <!-- 解析中 / 缓冲中 -->
     <div v-if="resolving || (buffering && src && !overlayMsg)" class="center-state"><Spinner :size="48" /></div>
@@ -514,7 +555,14 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
     <!-- 播放设置：不全屏时搬到页面最上层，悬浮在屏幕正中间（播放器框太小，关在里面会被切掉）；
          全屏时必须留在 .stage 里（全屏只显示 .stage 里的东西），悬浮在画面右边 -->
     <Teleport to="body" :disabled="isFull">
-      <PlayerSettings v-if="showSettings" :floating="!isFull" @close="showSettings = false" @pip="togglePip" />
+      <PlayerSettings
+        v-if="showSettings"
+        :floating="!isFull"
+        :sr-mode="srMode"
+        @update:sr-mode="setSrMode"
+        @close="showSettings = false"
+        @pip="togglePip"
+      />
     </Teleport>
   </div>
 </template>
@@ -524,6 +572,8 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
 .stage.full { aspect-ratio: auto; height: 100%; }
 .stage.idle { cursor: none; }
 .video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+.video.sr-source { opacity: 0; }
+.sr-output { pointer-events: none; }
 .grow { flex: 1; min-width: 0; }
 
 .center-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; pointer-events: none; text-align: center; padding: 0 24px; }

@@ -12,6 +12,8 @@ license terms. In particular:
 - Bundled Vue and Vue Router runtime code, MIT.
 - Bundled hls.js and Material Color Utilities code, Apache-2.0.
   hls.js also carries the Brightcove copyright notice in its upstream license.
+- Bundled Anime4K.js code, Copyright 2023 もにょ～ん, MIT.
+- Anime4K shaders, Copyright 2019 bloc97, MIT.
 
 These components are not relicensed under the project's Apache-2.0 terms.
 Their original notices are retained in THIRD_PARTY_NOTICES.md,

@@ -14,10 +14,11 @@ class LocalHttpServer(ctx: Context, port: Int = 0) : NanoHTTPD("127.0.0.1", port
     private val cacheDir: File = File(ctx.filesDir, "cache")
     private val webDir: File = File(ctx.filesDir, "web")
     private val store = CacheStore.get(ctx) // 单例，和 Bridge / 下载服务是同一份
+    private val prefs = ctx.getSharedPreferences("app", Context.MODE_PRIVATE)
 
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri
-        return when {
+        val response = when {
             // 离线时前端还在用"找服务器"的半截地址（/api/stream、/api/cover），
             // 这里也认这两个接口：按 path（就是 epId）去本地缓存找文件返回。
             // 这样前端在线离线走同一套地址，一行不用改。
@@ -29,6 +30,14 @@ class LocalHttpServer(ctx: Context, port: Int = 0) : NanoHTTPD("127.0.0.1", port
                 serveFromDir(webDir, uri.trimStart('/').ifEmpty { "index.html" }, session)
             }
         }
+        // 在线页面播放本机缓存时，WebGL 需要读取视频帧。只认可当前盒子和本机离线页面。
+        val origin = session.headers["origin"]?.trimEnd('/')
+        val boxOrigin = prefs.getString("server_addr", "")?.trimEnd('/')
+        if (origin != null && (origin == boxOrigin || origin == baseUrl())) {
+            response.addHeader("Access-Control-Allow-Origin", origin)
+            response.addHeader("Vary", "Origin")
+        }
+        return response
     }
 
     private fun serveCacheFile(file: File, session: IHTTPSession): Response {

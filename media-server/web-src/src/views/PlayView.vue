@@ -140,6 +140,7 @@ function onEnded() {
             <VideoPlayer
               :src="pb.play.src"
               :kind="pb.play.kind"
+              :series-key="`anime:${id}`"
               :title="playerTitle"
               :start-at="pb.play.startAt"
               :resolving="pb.play.resolving"

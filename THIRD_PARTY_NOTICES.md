@@ -12,6 +12,8 @@
 | Vue Router | https://github.com/vuejs/router | MIT，Copyright 2019-present Eduardo San Martin Morote | 打包进 `media-server/web/app.js` |
 | hls.js | https://github.com/video-dev/hls.js | Apache-2.0，Copyright 2017 Dailymotion；含上游注明的 2013-2015 Brightcove 权利声明 | 打包进 `media-server/web/app.js` |
 | Material Color Utilities | https://github.com/material-foundation/material-color-utilities | Apache-2.0，Material Eng / Material Foundation | 打包进 `media-server/web/app.js` |
+| Anime4K.js | https://github.com/monyone/Anime4K.js | MIT，Copyright 2023 もにょ～ん | 打包进 `media-server/web/app.js` |
+| Anime4K | https://github.com/bloc97/Anime4K | MIT，Copyright 2019 bloc97 | 着色器经 Anime4K.js 打包进 `media-server/web/app.js` |
 
 KazumiRules 的许可证历史显示其初始许可提交即为 MIT。项目旧记录曾误写为 GPL-3.0，公开版已更正；当前规则文件及其 MIT 许可证一并保留。
 
