@@ -33,6 +33,8 @@ export interface Task {
   animeRef?: string
   animeFiles?: string[]
   animeFailedFiles?: string[]
+  /** 失败的集和原因（片库页重试按钮旁边的小问号） */
+  animeFailures?: { file: string; message: string }[]
   /** 正在处理的几集（盒子同时下 2 集） */
   animeActive?: { file: string; state: 'resolving' | 'phone' | 'running' | 'mergewait' | 'merging'; progress: number }[]
 }

@@ -81,8 +81,9 @@ type TorrentTask struct {
 	AnimeRef         string          `json:"animeRef,omitempty"`
 	AnimeFiles       []string        `json:"animeFiles,omitempty"`
 	AnimeFailedFiles []string        `json:"animeFailedFiles,omitempty"`
-	AnimeActive      []AnimeActiveEp `json:"animeActive,omitempty"` // 正在处理的几集（同时下 2 集）
-	Cover            string          `json:"cover,omitempty"`       // 用户指定的封面（已落盘）
+	AnimeFailures    []AnimeFailure  `json:"animeFailures,omitempty"` // 失败的那几集和原因（片库页显示重试按钮用）
+	AnimeActive      []AnimeActiveEp `json:"animeActive,omitempty"`   // 正在处理的几集（同时下 2 集）
+	Cover            string          `json:"cover,omitempty"`         // 用户指定的封面（已落盘）
 	Manual           bool            `json:"manual,omitempty"`
 	Error            string          `json:"error,omitempty"`
 	CreatedAt        int64           `json:"createdAt"`

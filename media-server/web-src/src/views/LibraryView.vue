@@ -2,6 +2,7 @@
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { coverURL, epLabel, fetchLibrary, fmtSize, rescan, type DownloadingCard, type LocalCategory, type LocalItem } from '../api/local'
+import { api } from '../api/client'
 import { toast } from '../composables/snackbar'
 import { useServerTasks } from '../composables/serverTasks'
 import { isOffline, refreshCacheMarks } from '../composables/cache'
@@ -84,7 +85,7 @@ function onVisible() {
 }
 
 // 下载卡片共用任务状态中心；任务结束时顺手刷新片库，让下好的片子马上出现
-const { tasks: serverTasks } = useServerTasks()
+const { tasks: serverTasks, refreshTasks } = useServerTasks()
 let activeBefore = -1
 watch(serverTasks, (list) => {
   const cards = list
@@ -101,6 +102,7 @@ watch(serverTasks, (list) => {
       animeFiles: t.animeFiles,
       files: t.files,
       animeFailedFiles: t.animeFailedFiles,
+      animeFailures: t.animeFailures,
       animeActive: t.animeActive,
     }))
   downloading.value = cards
@@ -150,6 +152,24 @@ function activeText(a: NonNullable<DownloadingCard['animeActive']>[number]): str
     case 'resolving': return '正在找视频地址'
     case 'phone': return '等手机帮忙找地址'
     default: return '下载中'
+  }
+}
+
+// 失败的那一集：点"重试"让盒子再下一遍（任务还在跑就直接接到它的队列后面）
+const retrying = ref('')
+async function retryEp(d: DownloadingCard, file: string) {
+  const key = d.taskId + '|' + file
+  if (retrying.value) return
+  retrying.value = key
+  try {
+    const r = await api.retryDownload(d.taskId, [file])
+    if (!r.ok) throw new Error(r.error || '重试没成功')
+    toast(`已重新排上${file.replace(/\.mp4$/i, '')}，下载完会出现在片库里`, 4000)
+    refreshTasks()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : '重试没成功，再点一次')
+  } finally {
+    retrying.value = ''
   }
 }
 
@@ -271,7 +291,7 @@ const continueList = computed<ContinueEntry[]>(() => {
             <div class="t-body-l clamp-1">{{ d.title }}</div>
             <div class="progress"><i :style="{ width: pct(d.progress) + '%' }" /></div>
             <div class="t-body-m muted">{{ dlText(d) }}</div>
-            <div v-if="d.animeActive?.length" class="deps">
+            <div v-if="d.animeActive?.length || d.animeFailures?.length" class="deps">
               <div v-for="a in d.animeActive" :key="a.file" class="dep">
                 <div class="dehead">
                   <span class="t-body-m">{{ a.file.replace(/\.mp4$/i, '') }}</span>
@@ -280,6 +300,31 @@ const continueList = computed<ContinueEntry[]>(() => {
                   </span>
                 </div>
                 <div v-if="a.state === 'running'" class="deprogress"><i :style="{ width: pct(a.progress) + '%' }" /></div>
+              </div>
+              <div v-for="f in d.animeFailures" :key="f.file" class="dep fail">
+                <div class="dehead">
+                  <span class="t-body-m">{{ f.file.replace(/\.mp4$/i, '') }}</span>
+                  <span class="fright">
+                    <span class="t-body-s destate bad">失败</span>
+                    <button
+                      type="button"
+                      class="why"
+                      :title="f.message"
+                      :aria-label="'失败原因：' + f.message"
+                      @click="toast(f.message, 8000)"
+                    >
+                      <Icon name="help" :size="18" />
+                    </button>
+                    <Button
+                      small
+                      variant="tonal"
+                      :disabled="retrying === d.taskId + '|' + f.file"
+                      @click="retryEp(d, f.file)"
+                    >
+                      {{ retrying === d.taskId + '|' + f.file ? '重试中…' : '重试' }}
+                    </Button>
+                  </span>
+                </div>
               </div>
             </div>
             <div v-else-if="d.animeFiles?.length && d.stage" class="t-body-s muted">{{ d.stage }}</div>
@@ -363,4 +408,9 @@ const continueList = computed<ContinueEntry[]>(() => {
 .destate { flex: none; color: var(--md-sys-color-on-surface-variant); }
 .deprogress { height: 4px; margin-top: 7px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .deprogress i { display: block; height: 100%; border-radius: 2px; background: var(--md-sys-color-primary); transition: width var(--md-dur-long) var(--md-ease-standard); }
+.dep.fail { background: var(--md-sys-color-surface-container); box-shadow: inset 0 0 0 1px var(--md-sys-color-error-container); }
+.destate.bad { color: var(--md-sys-color-error); }
+.fright { flex: none; display: flex; align-items: center; gap: 6px; }
+.why { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--md-sys-color-on-surface-variant); cursor: pointer; }
+.why:hover { background: var(--md-sys-color-surface-container-highest); }
 </style>

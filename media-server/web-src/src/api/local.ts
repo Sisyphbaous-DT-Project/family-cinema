@@ -38,6 +38,7 @@ export interface DownloadingCard {
   animeFiles?: string[]
   files?: string[]
   animeFailedFiles?: string[]
+  animeFailures?: { file: string; message: string }[]
   animeActive?: Task['animeActive']
 }
 

@@ -62,6 +62,11 @@ export const api = {
     targetId: string
     episodes: { name: string; url: string; index: number }[]
   }): Promise<{ ok: boolean; id?: string; queued: number; skipped: number; dir: string }> => post('/download', p),
+  /** 重试下载失败的几集；files 为空 = 所有失败的集 */
+  retryDownload: (taskId: string, files: string[] = []) =>
+    post<{ ok: boolean; id?: string; queued: number; dir?: string; error?: string }>(
+      `/download/${encodeURIComponent(taskId)}/retry`, { files },
+    ),
   workerStatus: () => get<{ online: number }>('/worker/status'),
 }
 

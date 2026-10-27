@@ -40,13 +40,15 @@ type animeDLEpisode struct {
 }
 
 type animeDLTask struct {
-	info   TorrentTask // 给任务表看的那份（受 animeDL.mu 保护）
-	rule   string
-	ref    string
-	eps    []animeDLEpisode
-	ctx    context.Context
-	cancel context.CancelFunc
-	queued bool
+	info    TorrentTask // 给任务表看的那份（受 animeDL.mu 保护）
+	rule    string
+	ref     string
+	eps     []animeDLEpisode // 受 animeDL.mu 保护：重试时往运行中的任务追加
+	ctx     context.Context
+	cancel  context.CancelFunc
+	queued  bool
+	closing bool          // 已经收尾，不再接收追加的重试集（受 animeDL.mu 保护）
+	wake    chan struct{} // 追加重试集时叫醒正在收尾的下载工位
 }
 
 var animeDL struct {
@@ -62,6 +64,7 @@ func initAnimeDownload(mux *http.ServeMux, a *animeapi.API) {
 	animeDL.wake = make(chan struct{}, 1)
 	go animeDLWorker()
 	mux.HandleFunc("POST /api/anime/download", handleAnimeDownload)
+	mux.HandleFunc("POST /api/anime/download/{id}/retry", handleAnimeRetry)
 }
 
 // ---- 接口 ----
@@ -160,19 +163,7 @@ func handleAnimeDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	files := make([]string, len(eps))
-	for i := range eps {
-		files[i] = eps[i].File
-	}
-	t := &animeDLTask{
-		info: TorrentTask{
-			ID: "anime-" + strconv.FormatInt(time.Now().UnixNano(), 36), Name: title, Category: category,
-			TargetDir: dir, Status: "running", Stage: "排队中，前面的下完就开始", CreatedAt: time.Now().Unix(),
-			AnimeRule: rule.Name, AnimeRef: req.Ref, AnimeFiles: files,
-		},
-		rule: rule.Name, ref: req.Ref, eps: eps, ctx: ctx, cancel: cancel, queued: true,
-	}
+	t := newAnimeDLTask(rule.Name, req.Ref, title, category, dir, eps)
 	animeDL.mu.Lock()
 	animeDL.tasks = append([]*animeDLTask{t}, animeDL.tasks...)
 	trimAnimeDLHistory()
@@ -186,6 +177,112 @@ func handleAnimeDownload(w http.ResponseWriter, r *http.Request) {
 
 func writeAnimeDLError(w http.ResponseWriter, msg string) {
 	animeDLJSON(w, map[string]any{"ok": false, "error": msg})
+}
+
+// newAnimeDLTask 建一个排队中的番剧下载任务
+func newAnimeDLTask(ruleName, ref, title, category, dir string, eps []animeDLEpisode) *animeDLTask {
+	ctx, cancel := context.WithCancel(context.Background())
+	files := make([]string, len(eps))
+	for i := range eps {
+		files[i] = eps[i].File
+	}
+	return &animeDLTask{
+		info: TorrentTask{
+			ID: "anime-" + strconv.FormatInt(time.Now().UnixNano(), 36), Name: title, Category: category,
+			TargetDir: dir, Status: "running", Stage: "排队中，前面的下完就开始", CreatedAt: time.Now().Unix(),
+			AnimeRule: ruleName, AnimeRef: ref, AnimeFiles: files,
+		},
+		rule: ruleName, ref: ref, eps: eps, ctx: ctx, cancel: cancel, queued: true,
+		wake: make(chan struct{}, 1),
+	}
+}
+
+// POST /api/anime/download/{id}/retry  body: {"files":["第03集.mp4"]}（不传 files = 所有失败的集）
+// 任务还在跑就直接追加到它的队列（不用排在别的任务后面）；已经结束就新开一个只含这几集的任务。
+func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		Files []string `json:"files"`
+	}
+	_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req)
+	want := make(map[string]bool, len(req.Files))
+	for _, f := range req.Files {
+		want[f] = true
+	}
+
+	animeDL.mu.Lock()
+	var t *animeDLTask
+	for _, x := range animeDL.tasks {
+		if x.info.ID == id {
+			t = x
+			break
+		}
+	}
+	if t == nil {
+		animeDL.mu.Unlock()
+		writeAnimeDLError(w, "这个下载任务已经不在了，刷新页面看看")
+		return
+	}
+	failed := make(map[string]bool, len(t.info.AnimeFailedFiles))
+	for _, f := range t.info.AnimeFailedFiles {
+		failed[f] = true
+	}
+	var eps []animeDLEpisode
+	for _, ep := range t.eps {
+		if !failed[ep.File] || (len(want) > 0 && !want[ep.File]) {
+			continue
+		}
+		eps = append(eps, ep)
+	}
+	if len(eps) == 0 {
+		animeDL.mu.Unlock()
+		writeAnimeDLError(w, "没有要重试的集")
+		return
+	}
+	name, dir := t.info.Name, t.info.TargetDir
+	if t.info.Status == "running" && !t.closing {
+		retried := make(map[string]bool, len(eps))
+		for _, ep := range eps {
+			t.eps = append(t.eps, ep)
+			t.info.AnimeFiles = append(t.info.AnimeFiles, ep.File)
+			retried[ep.File] = true
+		}
+		t.info.AnimeFailedFiles = slices.DeleteFunc(t.info.AnimeFailedFiles, func(f string) bool { return retried[f] })
+		t.info.AnimeFailures = slices.DeleteFunc(t.info.AnimeFailures, func(f AnimeFailure) bool { return retried[f.File] })
+		select {
+		case t.wake <- struct{}{}:
+		default:
+		}
+		animeDL.mu.Unlock()
+		animeDLJSON(w, map[string]any{"ok": true, "id": id, "queued": len(eps), "dir": name})
+		return
+	}
+	ruleName, ref, category := t.rule, t.ref, t.info.Category
+	animeDL.mu.Unlock()
+
+	// 已经结束的任务：新开一个只含这几集的任务，已经下好的跳过
+	eps = slices.DeleteFunc(eps, func(ep animeDLEpisode) bool {
+		st, err := os.Stat(filepath.Join(dir, ep.File))
+		return err == nil && st.Size() > 0
+	})
+	if len(eps) == 0 {
+		writeAnimeDLError(w, "这些集已经在文件夹里了")
+		return
+	}
+	if animeDL.api.Rule(ruleName) == nil {
+		writeAnimeDLError(w, "这个片源用不了")
+		return
+	}
+	nt := newAnimeDLTask(ruleName, ref, name, category, dir, eps)
+	animeDL.mu.Lock()
+	animeDL.tasks = append([]*animeDLTask{nt}, animeDL.tasks...)
+	trimAnimeDLHistory()
+	animeDL.mu.Unlock()
+	select {
+	case animeDL.wake <- struct{}{}:
+	default:
+	}
+	animeDLJSON(w, map[string]any{"ok": true, "id": nt.info.ID, "queued": len(eps), "dir": name})
 }
 
 // reEpisodeName 集名本身就是集数：第5集 / 第05话 / EP05 / 05 / 5
@@ -336,6 +433,12 @@ func (t *animeDLTask) update(f func(i *TorrentTask)) {
 	animeDL.mu.Unlock()
 }
 
+// AnimeFailure 某一集没下成的原因（片库页的问号悬停显示）
+type AnimeFailure struct {
+	File    string `json:"file"`
+	Message string `json:"message"`
+}
+
 // AnimeActiveEp 正在处理的一集（任务表里给前端画每集进度）
 type AnimeActiveEp struct {
 	File     string  `json:"file"`
@@ -457,13 +560,14 @@ func runAnimeDLTask(t *animeDLTask) {
 			run.finished++
 			run.active = slices.DeleteFunc(run.active, func(a *animeDLSlot) bool { return a == sl })
 			t.info.AnimeFailedFiles = append(t.info.AnimeFailedFiles, sl.ep.File)
+			t.info.AnimeFailures = append(t.info.AnimeFailures, AnimeFailure{File: sl.ep.File, Message: msg})
 		})
 	}
 	// take 按顺序领下一集；该停了返回 -1
 	take := func() int {
 		mu.Lock()
 		defer mu.Unlock()
-		if stop || next >= len(t.eps) || t.ctx.Err() != nil {
+		if stop || t.ctx.Err() != nil {
 			return -1
 		}
 		if rule == nil {
@@ -472,6 +576,12 @@ func runAnimeDLTask(t *animeDLTask) {
 		}
 		if free := diskFree(); free >= 0 && free < animeDLMinFree {
 			fails, stop = append(fails, "硬盘空间不够了（剩余不到 2GB）"), true
+			return -1
+		}
+		animeDL.mu.Lock()
+		n := len(t.eps)
+		animeDL.mu.Unlock()
+		if next >= n {
 			return -1
 		}
 		next++
@@ -500,6 +610,10 @@ func runAnimeDLTask(t *animeDLTask) {
 		}
 		mu.Lock()
 		okN++
+		// 这一集之前失败过、这次重试成功了：把旧记录去掉
+		fails = slices.DeleteFunc(fails, func(s string) bool {
+			return strings.HasPrefix(s, sl.ep.Label+"：")
+		})
 		mu.Unlock()
 		run.set(func() {
 			run.finished++
@@ -529,8 +643,20 @@ func runAnimeDLTask(t *animeDLTask) {
 	}()
 
 	worker := func() {
-		for i := take(); i >= 0; i = take() {
+		for {
+			i := take()
+			if i < 0 {
+				// 可能刚有人点了"重试"：多等一拍，别急着收尾
+				select {
+				case <-t.wake:
+					continue
+				case <-time.After(300 * time.Millisecond):
+					return
+				}
+			}
+			animeDL.mu.Lock()
 			ep := t.eps[i]
+			animeDL.mu.Unlock()
 			sl := &animeDLSlot{idx: i, ep: ep, state: "resolving"}
 			run.set(func() { run.active = append(run.active, sl) })
 			target, kind, err := resolveForDownload(t, ep, func() { run.set(func() { sl.state = "phone" }) })
@@ -592,6 +718,10 @@ func runAnimeDLTask(t *animeDLTask) {
 		}()
 	}
 	wg.Wait()
+	// 所有下载工位都退出了：之后再点"重试"就新开任务，不再往这个任务里塞
+	animeDL.mu.Lock()
+	t.closing = true
+	animeDL.mu.Unlock()
 	close(merges)
 	mergeWG.Wait()
 
@@ -600,7 +730,7 @@ func runAnimeDLTask(t *animeDLTask) {
 		switch {
 		case t.ctx.Err() != nil:
 			x.Status, x.Stage = "stopped", ""
-		case len(fails) == 0:
+		case len(x.AnimeFailedFiles) == 0:
 			x.Status, x.Stage, x.Progress = "done", "下载完成", 100
 		default:
 			x.Status, x.Stage = "error", ""
