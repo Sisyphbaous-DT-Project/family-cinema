@@ -83,18 +83,20 @@ function up(e: PointerEvent) {
   border-radius: 28px 28px 0 0;
   box-shadow: var(--md-elev-3);
   padding-bottom: var(--safe-bottom);
-  transition: transform var(--md-dur-medium) var(--md-ease-emphasized);
+  transition: transform 460ms var(--ease-spring);
 }
+/* 弹上来时会略微冲过头：底下垫一截同色的，免得露出缝 */
+.sheet::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 48px; background: inherit; }
 .sheet.dragging { transition: none; }
 .handle-area { display: flex; justify-content: center; padding: 12px 0 4px; touch-action: none; cursor: grab; }
 .handle { width: 32px; height: 4px; border-radius: 2px; background: var(--md-sys-color-on-surface-variant); opacity: 0.4; }
 .sheet-title { margin: 4px 24px 12px; }
 .sheet-body { overflow-y: auto; padding: 0 24px 24px; }
 
-/* 进出场：遮罩淡入淡出，面板从底部滑入 */
+/* 进出场：遮罩淡入淡出，面板从底部弹上来（落地时轻轻一弹），收起时加速沉下去 */
 .sheet-enter-active .scrim, .sheet-leave-active .scrim { transition: opacity var(--md-dur-medium) linear; }
 .sheet-enter-from .scrim, .sheet-leave-to .scrim { opacity: 0; }
-.sheet-enter-active .sheet { transition: transform 400ms var(--md-ease-emphasized-decel); }
-.sheet-leave-active .sheet { transition: transform 200ms var(--md-ease-emphasized-accel); }
+.sheet-enter-active .sheet { transition: transform 560ms var(--ease-spring); }
+.sheet-leave-active .sheet { transition: transform 240ms var(--ease-exit); }
 .sheet-enter-from .sheet, .sheet-leave-to .sheet { transform: translateY(100%) !important; }
 </style>

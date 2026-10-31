@@ -23,7 +23,7 @@ const sub = computed(() => (epCount.value > 1 ? `共 ${epCount.value} 集` : pro
 
 <template>
   <router-link v-ripple class="lc" :to="`/local/${encodeURIComponent(item.id)}`">
-    <div class="cover">
+    <div class="cover" :data-hero="`local:${item.id}`">
       <div v-if="cover && !loaded && !failed" class="skeleton fill" />
       <img v-if="cover && !failed" :src="cover" :alt="item.title" loading="lazy" decoding="async" :class="{ show: loaded }" @load="loaded = true" @error="failed = true" />
       <div v-if="!cover || failed" class="ph">
@@ -43,8 +43,9 @@ const sub = computed(() => (epCount.value > 1 ? `共 ${epCount.value} 集` : pro
 .lc { display: block; border-radius: 14px; color: inherit; padding-bottom: 4px; }
 .cover { position: relative; aspect-ratio: 2 / 3; border-radius: 14px; overflow: hidden; background: var(--md-sys-color-surface-container-high); box-shadow: var(--fc-float); }
 .fill { position: absolute; inset: 0; border-radius: 0; }
-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--md-dur-medium) linear; }
-img.show { opacity: 1; }
+/* 封面加载好时：淡入的同时从微微放大落回原样 */
+img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scale(1.06); transition: opacity 420ms ease, transform 700ms var(--ease-out-expo); }
+img.show { opacity: 1; transform: none; }
 .ph { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgb(0 0 0 / 0.35); }
 .bar i { display: block; height: 100%; background: var(--md-sys-color-primary-container); }

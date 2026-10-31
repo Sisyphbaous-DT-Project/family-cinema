@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, titleOf } from '../api/client'
+import { peekSubject } from '../api/bangumi'
+import { coverHint, holdTransition } from '../composables/motion'
 import { fmtSize } from '../api/local'
 import type { Subject } from '../api/types'
 import { usePlayback } from '../composables/usePlayback'
@@ -24,9 +26,17 @@ import { useEpisodeSizes } from '../composables/episodeSizes'
 
 const route = useRoute()
 const id = Number(route.params.id)
-const subject = ref<Subject | null>(null)
+// 从详情页过来时番剧资料已经在手，第一帧就能画出标题和播放器里的封面；没有的话先用列表卡片上的封面
+const peeked = peekSubject(id)
+const hint = coverHint(id)
+const subject = ref<Subject | null>(peeked)
+const subjectP = api.subject(id)
+if (!peeked && !hint) holdTransition(subjectP)
 const loadError = ref('')
 const tab = ref(0)
+// 「选源 / 简介」切换时内容顺着方向滑过去
+const tabSlide = ref('slide-next')
+watch(tab, (n, o) => (tabSlide.value = n > o ? 'slide-next' : 'slide-prev'))
 const sheet = ref(false)
 const kw = ref('')
 const pb = usePlayback(id, subject)
@@ -37,7 +47,7 @@ const stickScrolled = useScrolled(stickEl)
 
 onMounted(async () => {
   try {
-    subject.value = await api.subject(id)
+    subject.value = await subjectP
     kw.value = titleOf(subject.value)
     pb.start()
   } catch (e) {
@@ -45,7 +55,8 @@ onMounted(async () => {
   }
 })
 
-const title = computed(() => (subject.value ? titleOf(subject.value) : ''))
+const title = computed(() => (subject.value ? titleOf(subject.value) : hint?.title ?? ''))
+const cover = computed(() => subject.value?.images.large || subject.value?.images.common || hint?.img || '')
 const playerTitle = computed(() => [title.value, pb.currentEp.value?.name].filter(Boolean).join(' · '))
 const itemCount = computed(() => pb.currentSource.value?.items.length ?? 0)
 const { line: airLine, cn: airCn } = useAirtime(id, subject)
@@ -136,11 +147,13 @@ function onEnded() {
             <template v-if="subject" #actions><FollowButton :subject="subject" :source="followSource" small /></template>
           </TopAppBar>
           <!-- 播放器：圆角矩形，左右和下面的卡片对齐（全屏时播放器整个提到最上层铺满，不受这层圆角影响） -->
-          <div class="playerbox">
+          <div class="playerbox" :data-hero="`play:${id}`" data-hero-p="1">
             <VideoPlayer
               :src="pb.play.src"
               :kind="pb.play.kind"
               :series-key="`anime:${id}`"
+              :cover="cover"
+              :hero-key="`play:${id}`"
               :title="playerTitle"
               :start-at="pb.play.startAt"
               :resolving="pb.play.resolving"
@@ -159,107 +172,110 @@ function onEnded() {
       <div class="right">
         <Tabs v-model="tab" :tabs="['选源', '简介']" />
 
-        <div v-if="loadError" class="state">
-          <div class="muted">{{ loadError }}</div>
-        </div>
-
-        <section v-else-if="tab === 0" class="src">
-          <!-- 片源站 -->
-          <div class="label t-label-l muted">片源 <span v-if="pb.searching.value">· 搜索中…</span></div>
-          <div class="chips">
-            <Chip
-              v-for="st in pb.sources.value"
-              :key="st.rule.name"
-              :selected="pb.sel.rule === st.rule.name"
-              :loading="st.status === 'loading'"
-              :disabled="st.status !== 'loading' && !st.items.length"
-              :badge="badge(st)"
-              :title="st.error"
-              @click="pb.chooseRule(st.rule.name, true)"
-            >{{ st.rule.name }}</Chip>
+        <Transition :name="tabSlide" mode="out-in">
+          <div v-if="loadError" class="state">
+            <div class="muted">{{ loadError }}</div>
           </div>
 
-          <!-- 该片源搜到的作品（多个时可切换） -->
-          <button v-if="pb.currentItem.value" v-ripple class="item" type="button" :disabled="itemCount < 2" @click="sheet = true">
-            <span class="grow">
-              <span class="t-label-m muted">匹配作品</span>
-              <span class="t-body-m clamp-1 name">{{ pb.currentItem.value.name }}</span>
-            </span>
-            <Icon v-if="itemCount > 1" name="expandMore" />
-          </button>
-
-          <!-- 线路 -->
-          <template v-if="pb.roads.value.length > 1">
-            <div class="label t-label-l muted">线路</div>
+          <section v-else-if="tab === 0" class="src">
+            <!-- 片源站 -->
+            <div class="label t-label-l muted">片源 <span v-if="pb.searching.value">· 搜索中…</span></div>
             <div class="chips">
               <Chip
-                v-for="(r, i) in pb.roads.value"
-                :key="i"
-                :selected="pb.sel.road === i"
-                @click="pb.chooseRoad(i)"
-              >{{ r.name }}</Chip>
-            </div>
-          </template>
-
-          <!-- 选集 / 多选下载到盒子 -->
-          <template v-if="pb.currentRoad.value">
-            <div v-if="dl.activeTask.value" class="dlstatus">
-              <div class="dltop t-body-m">
-                <span class="grow">{{ dl.activeTask.value.stage || '排队中，前面的下完就开始' }}</span>
-                <span>{{ Math.round(dl.activeTask.value.progress || 0) }}%</span>
-              </div>
-              <div class="dlbar"><i :style="{ width: Math.min(100, dl.activeTask.value.progress || 0) + '%' }" /></div>
-              <div class="t-body-s muted">
-                已完成 {{ dl.doneCount.value }} / {{ dl.activeTask.value.animeFiles?.length ?? 0 }} 集
-                <span v-if="speedText(dl.activeTask.value.speedKBs)"> · {{ speedText(dl.activeTask.value.speedKBs) }}</span>
-              </div>
+                v-for="st in pb.sources.value"
+                :key="st.rule.name"
+                :selected="pb.sel.rule === st.rule.name"
+                :loading="st.status === 'loading'"
+                :disabled="st.status !== 'loading' && !st.items.length"
+                :badge="badge(st)"
+                :title="st.error"
+                @click="pb.chooseRule(st.rule.name, true)"
+              >{{ st.rule.name }}</Chip>
             </div>
 
-            <div class="label t-label-l muted headrow">
-              <span>{{ dlMode ? '选择要下载的集' : `选集 · 共 ${pb.currentRoad.value.episodes.length} 集` }}</span>
-              <Button v-if="!dlMode" variant="tonal" small @click="startDownload"><Icon name="download" :size="20" />下载到盒子</Button>
-            </div>
-            <div v-if="dlMode" class="dlactions">
-              <Button variant="outlined" small @click="toggleAll">{{ allOn ? '全不选' : '全选整部' }}</Button>
-              <Button variant="text" small @click="exitDownload">退出</Button>
-              <span class="t-body-s muted dlhint">点集数打勾</span>
-            </div>
-            <div v-if="dlMode && sz.needPhone.value" class="t-body-s muted">这个站要打开手机 App 才量得出大小，不影响下载</div>
-            <div ref="epsEl" class="eps" :style="{ '--cell-min': cellMin + 'px' }">
-              <button
-                v-for="(e, i) in pb.currentRoad.value.episodes"
-                :key="i"
-                v-ripple
-                class="ep t-label-l"
-                :class="{
-                  on: !dlMode && pb.sel.ep === i,
-                  picked: dlMode && dlSelected.has(i),
-                  filling: ['running', 'merging'].includes(dl.episodeState(i).kind),
-                  failed: dl.episodeState(i).kind === 'error',
-                }"
-                :style="{ '--p': dl.episodeState(i).pct + '%' }"
-                type="button"
-                @click="onEpisode(i)"
-              >
-                <span v-if="dlMode" class="tick" :class="{ on: dlSelected.has(i) }"><Icon v-if="dlSelected.has(i)" name="check" :size="16" /></span>
-                <span class="lab">
-                  {{ e.name }}<span v-if="dl.episodeState(i).text" class="st" :class="'st-' + dl.episodeState(i).kind">（{{ dl.episodeState(i).text }}）</span>
-                  <template v-if="dlMode"><br /><span class="sz t-label-s" :class="{ guess: sz.sizeOf(i).guess }">{{ sz.sizeOf(i).text }}</span></template>
-                </span>
-              </button>
-            </div>
-            <div v-if="dlMode" class="selbar">
-              <div class="grow">
-                <div class="t-body-l">
-                  已选 <b>{{ pickedEpisodes.length }}</b> 集<template v-if="sz.totalText.value"> · <b :class="{ bad: sz.tooBig.value }">{{ sz.totalText.value }}</b></template>
+            <!-- 该片源搜到的作品（多个时可切换） -->
+            <button v-if="pb.currentItem.value" v-ripple class="item" type="button" :disabled="itemCount < 2" @click="sheet = true">
+              <span class="grow">
+                <span class="t-label-m muted">匹配作品</span>
+                <span class="t-body-m clamp-1 name">{{ pb.currentItem.value.name }}</span>
+              </span>
+              <Icon v-if="itemCount > 1" name="expandMore" />
+            </button>
+
+            <!-- 线路 -->
+            <template v-if="pb.roads.value.length > 1">
+              <div class="label t-label-l muted">线路</div>
+              <div class="chips">
+                <Chip
+                  v-for="(r, i) in pb.roads.value"
+                  :key="i"
+                  :selected="pb.sel.road === i"
+                  @click="pb.chooseRoad(i)"
+                >{{ r.name }}</Chip>
+              </div>
+            </template>
+
+            <!-- 选集 / 多选下载到盒子 -->
+            <template v-if="pb.currentRoad.value">
+              <div v-if="dl.activeTask.value" class="dlstatus">
+                <div class="dltop t-body-m">
+                  <span class="grow">{{ dl.activeTask.value.stage || '排队中，前面的下完就开始' }}</span>
+                  <span>{{ Math.round(dl.activeTask.value.progress || 0) }}%</span>
                 </div>
-                <div class="t-body-s" :class="sz.tooBig.value ? 'bad' : 'muted'">
-                  <template v-if="sz.total.value.pending && pickedEpisodes.length">还有 {{ sz.total.value.pending }} 集在算 · </template>
-                  <template v-if="sz.disk.value">{{ sz.tooBig.value ? '空间不够了，' : '' }}盒子还剩 {{ sz.disk.value.freeH }}</template>
+                <div class="dlbar"><i :style="{ width: Math.min(100, dl.activeTask.value.progress || 0) + '%' }" /></div>
+                <div class="t-body-s muted">
+                  已完成 {{ dl.doneCount.value }} / {{ dl.activeTask.value.animeFiles?.length ?? 0 }} 集
+                  <span v-if="speedText(dl.activeTask.value.speedKBs)"> · {{ speedText(dl.activeTask.value.speedKBs) }}</span>
                 </div>
               </div>
-              <Button :disabled="!pickedEpisodes.length" @click="dlSheet = true">下一步</Button>
-            </div>
+
+              <div class="label t-label-l muted headrow">
+                <span>{{ dlMode ? '选择要下载的集' : `选集 · 共 ${pb.currentRoad.value.episodes.length} 集` }}</span>
+                <Button v-if="!dlMode" variant="tonal" small @click="startDownload"><Icon name="download" :size="20" />下载到盒子</Button>
+              </div>
+              <div v-if="dlMode" class="dlactions">
+                <Button variant="outlined" small @click="toggleAll">{{ allOn ? '全不选' : '全选整部' }}</Button>
+                <Button variant="text" small @click="exitDownload">退出</Button>
+                <span class="t-body-s muted dlhint">点集数打勾</span>
+              </div>
+              <div v-if="dlMode && sz.needPhone.value" class="t-body-s muted">这个站要打开手机 App 才量得出大小，不影响下载</div>
+              <div ref="epsEl" class="eps" :style="{ '--cell-min': cellMin + 'px' }">
+                <button
+                  v-for="(e, i) in pb.currentRoad.value.episodes"
+                  :key="i"
+                  v-ripple
+                  class="ep t-label-l"
+                  :class="{
+                    on: !dlMode && pb.sel.ep === i,
+                    picked: dlMode && dlSelected.has(i),
+                    filling: ['running', 'merging'].includes(dl.episodeState(i).kind),
+                    failed: dl.episodeState(i).kind === 'error',
+                  }"
+                  :style="{ '--p': dl.episodeState(i).pct + '%' }"
+                  type="button"
+                  @click="onEpisode(i)"
+                >
+                  <span v-if="dlMode" class="tick" :class="{ on: dlSelected.has(i) }"><Icon v-if="dlSelected.has(i)" name="check" :size="16" /></span>
+                  <span class="lab">
+                    {{ e.name }}<span v-if="dl.episodeState(i).text" class="st" :class="'st-' + dl.episodeState(i).kind">（{{ dl.episodeState(i).text }}）</span>
+                    <template v-if="dlMode"><br /><span class="sz t-label-s" :class="{ guess: sz.sizeOf(i).guess }">{{ sz.sizeOf(i).text }}</span></template>
+                  </span>
+                </button>
+              </div>
+              <Transition name="bar-rise">
+                <div v-if="dlMode" class="selbar">
+                  <div class="grow">
+                    <div class="t-body-l">
+                      已选 <b>{{ pickedEpisodes.length }}</b> 集<template v-if="sz.totalText.value"> · <b :class="{ bad: sz.tooBig.value }">{{ sz.totalText.value }}</b></template>
+                    </div>
+                    <div class="t-body-s" :class="sz.tooBig.value ? 'bad' : 'muted'">
+                      <template v-if="sz.total.value.pending && pickedEpisodes.length">还有 {{ sz.total.value.pending }} 集在算 · </template>
+                      <template v-if="sz.disk.value">{{ sz.tooBig.value ? '空间不够了，' : '' }}盒子还剩 {{ sz.disk.value.freeH }}</template>
+                    </div>
+                  </div>
+                  <Button :disabled="!pickedEpisodes.length" @click="dlSheet = true">下一步</Button>
+                </div>
+            </Transition>
           </template>
 
           <div v-else-if="pb.roadsLoading.value" class="eps">
@@ -290,6 +306,7 @@ function onEnded() {
           </div>
           <p class="t-body-m summary">{{ subject.summary || '暂无简介' }}</p>
         </section>
+        </Transition>
       </div>
     </div>
 

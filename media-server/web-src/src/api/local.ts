@@ -58,6 +58,16 @@ function offlineItems(cat?: LocalCategory): LocalItem[] {
   return (cat ? all.filter((it) => it.category === cat) : all).map((it) => ({ ...it, episodes: it.episodes ?? [] }))
 }
 
+// 拉过的片库条目记在内存里：点进详情页时第一帧就能画出片名、封面和选集，再在后台刷新
+const known = new Map<string, LocalItem>()
+const remember = (items: LocalItem[]) => items.forEach((it) => known.set(it.id, it))
+
+/** 手头已有的条目（片库页拉过的、或缓存条目），没有返回 null */
+export function peekItem(id: string): LocalItem | null {
+  if (id.startsWith('cache:') || isOffline()) return offlineItems().find((x) => x.id === id) ?? null
+  return known.get(id) ?? null
+}
+
 export async function fetchLibrary(cat: LocalCategory): Promise<{ items: LocalItem[]; downloading: DownloadingCard[] }> {
   if (isOffline()) return { items: offlineItems(cat), downloading: [] }
   try {
@@ -66,6 +76,7 @@ export async function fetchLibrary(cat: LocalCategory): Promise<{ items: LocalIt
     const j = (await res.json()) as LibraryResponse
     const items = (j.items ?? []).map((it) => ({ ...it, episodes: it.episodes ?? [] }))
     items.sort((a, b) => b.modified - a.modified)
+    remember(items)
     return { items, downloading: j.downloading ?? [] }
   } catch (e) {
     // App 里网络抖动时降级到已缓存，而不是只报错
@@ -85,8 +96,9 @@ export async function fetchItem(id: string): Promise<LocalItem | null> {
     const res = await fetch('/api/library')
     if (!res.ok) throw new Error(`加载片库失败（${res.status}）`)
     const j = (await res.json()) as LibraryResponse
-    const it = (j.items ?? []).find((x) => x.id === id)
-    return it ? { ...it, episodes: it.episodes ?? [] } : null
+    const items = (j.items ?? []).map((x) => ({ ...x, episodes: x.episodes ?? [] }))
+    remember(items)
+    return items.find((x) => x.id === id) ?? null
   } catch (e) {
     if (hasBridge()) return offlineItems().find((x) => x.id === id) ?? null
     throw e

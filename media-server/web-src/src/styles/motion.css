@@ -1,0 +1,164 @@
+/* ===== 动效：一镜到底的换页 + 页面里的小动作 =====
+   曲线都是"先快后慢"：--ease-spring 快到终点时略微冲过头再弹回（约 4.6%），
+   --ease-soft 是几乎不过冲的软弹簧，用在整页推拉这种大动作上。
+   支持 linear() 的内核用真正的弹簧曲线，老内核退回相近的贝塞尔曲线。 */
+:root {
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-page: 500ms;
+  --dur-hero: 620ms;
+  --page-shadow: -14px 0 44px rgb(0 0 0 / 0.14);
+}
+@supports (transition-timing-function: linear(0, 1)) {
+  :root {
+    /* 阻尼比 0.7 的弹簧 */
+    --ease-spring: linear(0, 0.042, 0.144, 0.278, 0.42, 0.558, 0.681, 0.786, 0.871, 0.935, 0.982, 1.014, 1.033, 1.043, 1.046, 1.044, 1.04, 1.034, 1.027, 1.021, 1.015, 1.01, 1.006, 1.003, 1.001, 0.999, 0.999, 0.998, 0.998, 0.998, 0.998, 0.998, 1);
+    /* 阻尼比 0.9 的软弹簧 */
+    --ease-soft: linear(0, 0.033, 0.113, 0.216, 0.326, 0.434, 0.534, 0.623, 0.7, 0.765, 0.819, 0.862, 0.897, 0.924, 0.945, 0.961, 0.973, 0.982, 0.989, 0.993, 0.997, 0.999, 1, 1.001, 1.001, 1.001, 1.002, 1.001, 1.001, 1.001, 1.001, 1.001, 1);
+  }
+}
+
+/* ---------- 换页（视图过渡，见 composables/motion.ts） ---------- */
+/* 页面整层的默认：不用浏览器默认的"叠加淡变"，各种换页各自定动作 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-page);
+  animation-timing-function: var(--ease-soft);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+}
+
+/* 往里走：新页面从右边带着惯性推进来，旧页面往左退一点、变淡，像叠在一起的卡片 */
+html[data-vt="forward"]::view-transition-old(root) { animation-name: vt-recede-left; }
+html[data-vt="forward"]::view-transition-new(root) { animation-name: vt-enter-right; box-shadow: var(--page-shadow); }
+/* 往回退：上面那张卡片滑回右边，下面的页面跟着回到原位 */
+html[data-vt="back"]::view-transition-old(root) { animation-name: vt-exit-right; z-index: 1; box-shadow: var(--page-shadow); }
+html[data-vt="back"]::view-transition-new(root) { animation-name: vt-return-left; }
+
+/* 底部标签之间：顺着标签的方向横移一小段并交叉淡变，新页面落地时带一点弹 */
+html[data-vt="tab-next"]::view-transition-old(root) { animation: vt-out-left 280ms var(--ease-out-expo) both; }
+html[data-vt="tab-next"]::view-transition-new(root) { animation: vt-in-right 540ms var(--ease-spring) both; }
+html[data-vt="tab-prev"]::view-transition-old(root) { animation: vt-out-right 280ms var(--ease-out-expo) both; }
+html[data-vt="tab-prev"]::view-transition-new(root) { animation: vt-in-left 540ms var(--ease-spring) both; }
+
+/* 同一层的其它页面（如片库管理的子页面）：旧的淡出，新的从稍小放大到原样 */
+html[data-vt="fade"]::view-transition-old(root) { animation: vt-fade-out 200ms ease-out both; }
+html[data-vt="fade"]::view-transition-new(root) { animation: vt-zoom-in 480ms var(--ease-spring) both; }
+
+/* 有主角（海报、搜索框）飞过去的时候，页面本身不再左右推，把舞台让给主角：
+   往里走 = 旧页面往后沉下去，新页面从下面浮上来；往回退 = 反过来 */
+html[data-vt="forward"][data-vt-hero]::view-transition-old(root) { animation: vt-sink 420ms var(--ease-out-expo) both; }
+html[data-vt="forward"][data-vt-hero]::view-transition-new(root) { animation: vt-rise 520ms var(--ease-soft) 30ms both; box-shadow: none; }
+html[data-vt="back"][data-vt-hero]::view-transition-old(root) { animation: vt-drop 360ms var(--ease-out-expo) both; box-shadow: none; }
+html[data-vt="back"][data-vt-hero]::view-transition-new(root) { animation: vt-surface 520ms var(--ease-soft) both; }
+
+/* 主角：从旧位置飞到新位置，大小一起变，落地时轻轻弹一下 */
+::view-transition-group(hero) {
+  animation-duration: var(--dur-hero);
+  animation-timing-function: var(--ease-spring);
+  border-radius: 14px;
+  overflow: clip;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 0.24);
+}
+/* 形状不同（竖海报 ↔ 横的播放器）时裁着变，不拉伸 */
+::view-transition-old(hero),
+::view-transition-new(hero) {
+  height: 100%;
+  object-fit: cover;
+  animation-duration: 340ms;
+  animation-timing-function: ease;
+}
+/* 只有起点或只有终点（另一头不在屏幕上）：原地淡出/淡入 */
+::view-transition-old(hero):only-child { animation: vt-fade-out 240ms ease-out both; }
+::view-transition-new(hero):only-child { animation: vt-fade-in 320ms ease-out both; }
+
+/* 搜索框：不缩放文字，像窗帘一样从起点展开成搜索栏 */
+html[data-vt-hero="search"]::view-transition-group(hero),
+html[data-vt-hero="pansou"]::view-transition-group(hero) { border-radius: 16px; box-shadow: none; animation-duration: 540ms; }
+html[data-vt-hero="search"]::view-transition-old(hero),
+html[data-vt-hero="search"]::view-transition-new(hero),
+html[data-vt-hero="pansou"]::view-transition-old(hero),
+html[data-vt-hero="pansou"]::view-transition-new(hero) { object-fit: none; object-position: left center; }
+/* 新旧两行字位置不完全一样：旧的快点淡掉，免得叠出重影 */
+html[data-vt-hero="search"]::view-transition-old(hero),
+html[data-vt-hero="pansou"]::view-transition-old(hero) { animation-duration: 160ms; }
+html[data-vt-hero="search"]::view-transition-new(hero),
+html[data-vt-hero="pansou"]::view-transition-new(hero) { animation-duration: 280ms; }
+/* 推荐页右上角的放大镜按钮在搜索栏中间淡出（返回时在中间淡入） */
+html[data-vt="forward"][data-vt-hero="search"]::view-transition-old(hero),
+html[data-vt="back"][data-vt-hero="search"]::view-transition-new(hero) { object-position: center; }
+
+/* 底部导航单独成一层：不跟着页面推拉，只在进出二级页时整条滑下去/滑上来；
+   选中块的滑动由 NavBar 自己做，所以只显示"活的"新画面 */
+html[data-vt] .nav { transition: none; }
+::view-transition-group(navbar) { animation-duration: var(--dur-page); animation-timing-function: var(--ease-soft); }
+::view-transition-old(navbar) { animation: none; opacity: 0; }
+::view-transition-new(navbar) { animation: none; }
+
+@keyframes vt-recede-left { to { transform: translateX(-28%); opacity: 0.4; } }
+@keyframes vt-enter-right { from { transform: translateX(100%); } }
+@keyframes vt-exit-right { to { transform: translateX(100%); } }
+@keyframes vt-return-left { from { transform: translateX(-28%); opacity: 0.4; } }
+@keyframes vt-out-left { to { transform: translateX(-12%); opacity: 0; } }
+@keyframes vt-out-right { to { transform: translateX(12%); opacity: 0; } }
+@keyframes vt-in-right { from { transform: translateX(14%); opacity: 0; } }
+@keyframes vt-in-left { from { transform: translateX(-14%); opacity: 0; } }
+@keyframes vt-sink { to { transform: scale(0.93); opacity: 0; } }
+@keyframes vt-rise { from { transform: translateY(36px); opacity: 0; } }
+@keyframes vt-drop { to { transform: translateY(44px); opacity: 0; } }
+@keyframes vt-surface { from { transform: scale(0.93); opacity: 0; } }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in { from { opacity: 0; } }
+@keyframes vt-zoom-in { from { opacity: 0; transform: scale(0.96); } }
+
+/* ---------- 换页兜底（老内核不支持视图过渡时，App.vue 的 <Transition> 用这些） ---------- */
+/* 新旧页面同时在场、一起动，不再"旧的先消失、新的再出现" */
+.page-push-enter-active, .page-push-leave-active,
+.page-pop-enter-active, .page-pop-leave-active {
+  transition: transform var(--dur-page) var(--ease-soft), opacity var(--dur-page) var(--ease-soft);
+}
+.page-push-enter-active { z-index: 2; box-shadow: var(--page-shadow); }
+.page-push-enter-from { transform: translateX(100%); }
+.page-push-leave-to { transform: translateX(-28%); opacity: 0.4; }
+.page-pop-leave-active { z-index: 2; box-shadow: var(--page-shadow); }
+.page-pop-leave-to { transform: translateX(100%); }
+.page-pop-enter-from { transform: translateX(-28%); opacity: 0.4; }
+
+.page-tab-next-enter-active, .page-tab-prev-enter-active { transition: transform 540ms var(--ease-spring), opacity 300ms ease-out; }
+.page-tab-next-leave-active, .page-tab-prev-leave-active { transition: transform 280ms var(--ease-out-expo), opacity 200ms ease-out; }
+.page-tab-next-enter-from { transform: translateX(14%); opacity: 0; }
+.page-tab-next-leave-to { transform: translateX(-12%); opacity: 0; }
+.page-tab-prev-enter-from { transform: translateX(-14%); opacity: 0; }
+.page-tab-prev-leave-to { transform: translateX(12%); opacity: 0; }
+
+.page-fade-enter-active { transition: transform 480ms var(--ease-spring), opacity 260ms ease-out; }
+.page-fade-leave-active { transition: opacity 200ms ease-out; }
+.page-fade-enter-from { transform: scale(0.96); opacity: 0; }
+.page-fade-leave-to { opacity: 0; }
+
+/* ---------- 页面里的小动作 ---------- */
+/* 卡片、列表行出现时依次浮上来（--i 是第几个，最多错开 14 个，后面的一起出来） */
+@keyframes rise-in { from { opacity: 0; transform: translate(var(--in-x, 0), var(--in-y, 18px)) scale(0.94); } }
+.reveal { animation: rise-in 580ms var(--ease-spring) both; animation-delay: calc(min(var(--i, 0), 14) * 34ms); }
+
+/* 底部的多选操作条：从下面弹上来，收起时快速沉下去 */
+.bar-rise-enter-active { transition: transform 560ms var(--ease-spring), opacity 200ms ease-out; }
+.bar-rise-leave-active { transition: transform 220ms var(--ease-exit), opacity 180ms ease-in; }
+.bar-rise-enter-from, .bar-rise-leave-to { transform: translateY(calc(100% + 24px)) scale(0.96); opacity: 0; }
+
+/* 同一块区域里切换内容（如播放页的「选源 / 简介」、时间表换星期）：顺着方向滑过去 */
+.slide-next-enter-active, .slide-prev-enter-active { transition: transform 520ms var(--ease-spring), opacity 260ms ease-out; }
+.slide-next-leave-active, .slide-prev-leave-active { transition: transform 160ms var(--ease-exit), opacity 140ms ease-in; }
+.slide-next-enter-from { transform: translateX(32px); opacity: 0; }
+.slide-next-leave-to { transform: translateX(-24px); opacity: 0; }
+.slide-prev-enter-from { transform: translateX(-32px); opacity: 0; }
+.slide-prev-leave-to { transform: translateX(24px); opacity: 0; }
+
+/* 系统开了"减少动画"：所有动作直接到位 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+  .reveal { animation: none; }
+  *, *::before, *::after { transition-duration: 1ms !important; }
+}

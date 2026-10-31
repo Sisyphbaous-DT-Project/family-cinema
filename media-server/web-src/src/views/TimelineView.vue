@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { api } from '../api/client'
 import type { Card, CalendarDay } from '../api/types'
 import { weekName } from '../api/follow'
@@ -22,6 +22,10 @@ const jsDay = new Date().getDay() // 0=周日
 const today = jsDay === 0 ? 7 : jsDay
 const days = ref<CalendarDay[]>([])
 const selected = ref(today)
+// 换星期时卡片顺着方向滑进来：往后翻从右边来，往前翻从左边来
+const dayDir = ref<'' | 'next' | 'prev'>('')
+watch(selected, (n, o) => (dayDir.value = n > o ? 'next' : 'prev'))
+const dayIn = computed(() => (dayDir.value ? { '--in-x': dayDir.value === 'next' ? '36px' : '-36px', '--in-y': '0px' } : undefined))
 const loading = ref(true)
 const error = ref('')
 const airTick = ref(0) // 播出时间查回来后让列表重算
@@ -98,9 +102,18 @@ function subOf(c: Card): string {
         <Button variant="tonal" @click="load">再试一次</Button>
       </div>
       <div v-else-if="!items.length" class="state muted">这天没有新番放送</div>
-      <TransitionGroup v-else name="list" tag="div" class="grid">
-        <PosterCard v-for="c in items" :key="selected + '-' + c.id" :card="c" :sub="subOf(c)" :badge="isFollowed(c.id) ? '已追' : ''" />
-      </TransitionGroup>
+      <Transition v-else :name="`day-${dayDir}`" mode="out-in">
+        <div :key="selected" class="grid" :style="dayIn">
+          <PosterCard
+            v-for="(c, i) in items"
+            :key="c.id"
+            v-reveal="i"
+            :card="c"
+            :sub="subOf(c)"
+            :badge="isFollowed(c.id) ? '已追' : ''"
+          />
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -114,7 +127,8 @@ function subOf(c: Card): string {
 .sk { aspect-ratio: 2 / 3; }
 .line { height: 14px; width: 70%; margin-top: 10px; border-radius: 4px; }
 .state { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 64px 0; text-align: center; }
-/* 切换星期时卡片依次淡入上浮 */
-.list-enter-active { transition: opacity 300ms var(--md-ease-emphasized-decel), transform 300ms var(--md-ease-emphasized-decel); }
-.list-enter-from { opacity: 0; transform: translateY(16px); }
+/* 切换星期：旧的一排快速往反方向退场，新卡片（.reveal）从另一侧依次滑进来 */
+.day-next-leave-active, .day-prev-leave-active { transition: transform 150ms var(--ease-exit), opacity 130ms ease-in; }
+.day-next-leave-to { transform: translateX(-24px); opacity: 0; }
+.day-prev-leave-to { transform: translateX(24px); opacity: 0; }
 </style>

@@ -202,7 +202,7 @@ async function doDownload() {
   <div class="page">
     <header ref="barEl" class="bar fc-edge" :class="{ on: barScrolled }">
       <IconButton icon="back" label="返回" @click="$router.back()" />
-      <form class="field" @submit.prevent="submit()">
+      <form class="field" data-hero="pansou" @submit.prevent="submit()">
         <input
           ref="input"
           v-model="q"

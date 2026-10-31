@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { searchEpoch, transitionName } from './navState'
+import { installViewTransitions, transitionKind } from './composables/motion'
 import LibraryView from './views/LibraryView.vue'
 import LocalDetailView from './views/LocalDetailView.vue'
 import HomeView from './views/HomeView.vue'
@@ -23,6 +24,8 @@ declare module 'vue-router' {
     depth: number
     /** 是否属于底部导航的一级页面 */
     tab?: boolean
+    /** 一级页面在底部导航里的顺序：决定切换时页面往哪边移 */
+    order?: number
     /** 本地片库页面显示哪一类：movie=电影电视剧，series=番剧 */
     cat?: 'movie' | 'series'
   }
@@ -32,11 +35,11 @@ export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     // 前两栏：盒子里保存的电影电视剧、番剧（互不混杂）；后面才是在线聚合的推荐/时间表
-    { path: '/', name: 'movies', component: LibraryView, meta: { depth: 0, tab: true, cat: 'movie' } },
-    { path: '/series', name: 'series', component: LibraryView, meta: { depth: 0, tab: true, cat: 'series' } },
-    { path: '/discover', name: 'discover', component: HomeView, meta: { depth: 0, tab: true } },
-    { path: '/timeline', name: 'timeline', component: TimelineView, meta: { depth: 0, tab: true } },
-    { path: '/settings', name: 'settings', component: SettingsView, meta: { depth: 0, tab: true } },
+    { path: '/', name: 'movies', component: LibraryView, meta: { depth: 0, tab: true, order: 0, cat: 'movie' } },
+    { path: '/series', name: 'series', component: LibraryView, meta: { depth: 0, tab: true, order: 1, cat: 'series' } },
+    { path: '/discover', name: 'discover', component: HomeView, meta: { depth: 0, tab: true, order: 2 } },
+    { path: '/timeline', name: 'timeline', component: TimelineView, meta: { depth: 0, tab: true, order: 3 } },
+    { path: '/settings', name: 'settings', component: SettingsView, meta: { depth: 0, tab: true, order: 4 } },
     { path: '/search', name: 'search', component: SearchView, meta: { depth: 1 } },
     { path: '/cache', name: 'cache', component: CacheView, meta: { depth: 1 } },
     // 网盘搜索（盘搜），从「电影电视剧」页的搜索框进来
@@ -56,13 +59,17 @@ export const router = createRouter({
   scrollBehavior: () => false, // 每个页面自己是滚动容器，切换时位置由 KeepAlive/新实例自然保留
 })
 
+// 老内核兜底时 <Transition> 用的动画名
+const FALLBACK = { forward: 'page-push', back: 'page-pop', 'tab-next': 'page-tab-next', 'tab-prev': 'page-tab-prev', fade: 'page-fade' } as const
+
 router.beforeEach((to, from) => {
   if (from.name === undefined) {
     transitionName.value = '' // 首次进入不播放转场
     return
   }
-  if (to.meta.depth > from.meta.depth) transitionName.value = 'sa-forward'
-  else if (to.meta.depth < from.meta.depth) transitionName.value = 'sa-back'
-  else transitionName.value = 'fade-through'
+  transitionName.value = FALLBACK[transitionKind(to, from)]
   if (to.name === 'search' && from.meta.depth === 0) searchEpoch.value++
 })
+
+// 支持视图过渡的内核：换页做成一镜到底（海报飞进详情页、搜索框展开成搜索栏等）
+installViewTransitions(router)

@@ -19,7 +19,7 @@ const sub = (c: { score: number; date: string }) => (c.date ? c.date.slice(0, 7)
   <div class="page tab-page">
     <TopAppBar title="推荐">
       <template #actions>
-        <IconButton icon="search" label="搜索" @click="$router.push('/search')" />
+        <IconButton icon="search" label="搜索" data-hero="search" @click="$router.push('/search')" />
       </template>
     </TopAppBar>
     <CardGrid

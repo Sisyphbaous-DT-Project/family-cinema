@@ -240,7 +240,7 @@ const continueList = computed<ContinueEntry[]>(() => {
     </TopAppBar>
 
     <div class="wrap">
-      <form v-if="cat === 'movie' && !offline" class="pansearch" @submit.prevent="panSearch">
+      <form v-if="cat === 'movie' && !offline" class="pansearch" data-hero="pansou" @submit.prevent="panSearch">
         <Icon name="search" :size="22" class="psicon" />
         <input
           ref="panInput"
@@ -264,13 +264,14 @@ const continueList = computed<ContinueEntry[]>(() => {
         <h2 class="t-title-m fc-sec">接着看</h2>
         <div class="fc-card list">
           <router-link
-            v-for="c in continueList"
+            v-for="(c, i) in continueList"
             :key="c.item.id + ':' + c.epIndex"
             v-ripple
+            v-reveal="i"
             class="crow"
             :to="`/local/${encodeURIComponent(c.item.id)}?ep=${c.epIndex}`"
           >
-            <div class="cthumb">
+            <div class="cthumb" :data-hero="`local:${c.item.id}`">
               <img v-if="c.item.cover" :src="coverURL(c.item.cover)" :alt="c.item.title" loading="lazy" decoding="async" />
               <Icon v-else name="tv" :size="22" />
             </div>
@@ -363,7 +364,7 @@ const continueList = computed<ContinueEntry[]>(() => {
       <section v-else-if="items.length">
         <h2 class="t-title-m fc-sec">全部 · 共 {{ items.length }} 部</h2>
         <div class="grid">
-          <LocalCard v-for="it in items" :key="it.id" :item="it" :tick="progTick" />
+          <LocalCard v-for="(it, i) in items" :key="it.id" v-reveal="i" :item="it" :tick="progTick" />
         </div>
       </section>
     </div>

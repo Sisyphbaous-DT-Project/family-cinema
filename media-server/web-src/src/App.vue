@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import NavBar from './components/m3/NavBar.vue'
 import Snackbar from './components/m3/Snackbar.vue'
 import { transitionName } from './navState'
+import { useViewTransition } from './composables/motion'
 import { watchAppUpdate } from './composables/appUpdate'
 import { refreshFollows } from './composables/follows'
 
@@ -26,7 +27,8 @@ onMounted(() => {
 <template>
   <div class="shell">
     <router-view v-slot="{ Component, route: r }">
-      <Transition :name="transitionName">
+      <!-- 支持视图过渡时换页动画交给它（composables/motion.ts），这里只管切组件，旧页面立刻下场 -->
+      <Transition :name="transitionName" :css="!useViewTransition">
         <KeepAlive include="LibraryView,HomeView,TimelineView,SearchView">
           <component :is="Component" :key="r.path" />
         </KeepAlive>

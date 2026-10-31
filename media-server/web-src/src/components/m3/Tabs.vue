@@ -59,6 +59,6 @@ watch(() => [props.modelValue, props.tabs.length], () => nextTick(measure))
   height: 3px;
   border-radius: 3px 3px 0 0;
   background: var(--md-sys-color-primary);
-  transition: transform var(--md-dur-medium) var(--md-ease-emphasized), width var(--md-dur-medium) var(--md-ease-emphasized);
+  transition: transform 520ms var(--ease-spring), width 520ms var(--ease-spring);
 }
 </style>

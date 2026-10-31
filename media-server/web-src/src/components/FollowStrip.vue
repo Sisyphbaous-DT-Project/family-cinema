@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watchEffect } from 'vue'
 import { weekName, type FollowItem } from '../api/follow'
 import { freshlyUpdated, useFollows } from '../composables/follows'
+import { rememberCover } from '../composables/motion'
 import Icon from './m3/Icon.vue'
 
 // 时间表最上面一排：我追的番（刚更新的排前面，其余按下次更新时间）
 const { items } = useFollows()
+// 点进播放页时番剧数据还没到，播放器先用这张封面（换页时封面直接飞进播放器）
+watchEffect(() => items.value.forEach((f) => f.cover && rememberCover(f.id, f.cover, f.title)))
 
 const list = computed(() =>
   [...items.value].sort((a, b) => {
@@ -43,7 +46,7 @@ function status(f: FollowItem): { text: string; hot: boolean } {
     <h2 class="t-title-s sec">我追的番 · {{ list.length }} 部</h2>
     <div class="row">
       <router-link v-for="f in list" :key="f.id" v-ripple class="fcard" :to="`/play/${f.id}`">
-        <img v-if="f.cover" class="cv" :src="f.cover" alt="" loading="lazy" decoding="async" />
+        <img v-if="f.cover" class="cv" :src="f.cover" alt="" loading="lazy" decoding="async" :data-hero="`play:${f.id}`" />
         <div v-else class="cv" />
         <div class="info">
           <div class="t-title-s clamp-2 name">{{ f.title }}</div>

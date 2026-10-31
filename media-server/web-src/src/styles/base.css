@@ -173,19 +173,7 @@ a { color: inherit; text-decoration: none; }
   background: var(--md-sys-color-surface);
 }
 
-/* 底部导航切换：淡入淡出（fade through） */
-.fade-through-enter-active { transition: opacity 210ms linear 90ms, transform 300ms var(--md-ease-emphasized-decel) 90ms; }
-.fade-through-leave-active { transition: opacity 90ms linear; }
-.fade-through-enter-from { opacity: 0; transform: scale(0.92); }
-.fade-through-leave-to { opacity: 0; }
-
-/* 进入/返回详情：X 轴共享轴（shared axis） */
-.sa-forward-enter-active, .sa-back-enter-active { transition: opacity 210ms linear 90ms, transform 300ms var(--md-ease-emphasized); }
-.sa-forward-leave-active, .sa-back-leave-active { transition: opacity 90ms linear, transform 300ms var(--md-ease-emphasized); }
-.sa-forward-enter-from { opacity: 0; transform: translateX(30px); }
-.sa-forward-leave-to { opacity: 0; transform: translateX(-30px); }
-.sa-back-enter-from { opacity: 0; transform: translateX(-30px); }
-.sa-back-leave-to { opacity: 0; transform: translateX(30px); }
+/* 页面转场动画见 styles/motion.css */
 
 /* 骨架屏闪烁 */
 .skeleton {

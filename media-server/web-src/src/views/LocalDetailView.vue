@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { epLabel, fetchItem, fmtSize, streamURL, type LocalItem } from '../api/local'
+import { coverURL, epLabel, fetchItem, fmtSize, peekItem, streamURL, type LocalItem } from '../api/local'
 import { getProg, isWatched, setProg } from '../composables/progress'
 import {
   cacheState,
@@ -19,6 +19,7 @@ import { canControlDownload, hasBridge } from '../composables/bridge'
 import { playerPrefs } from '../composables/playerPrefs'
 import { useScrolled } from '../composables/useScrolled'
 import { toast } from '../composables/snackbar'
+import { holdTransition } from '../composables/motion'
 import TopAppBar from '../components/m3/TopAppBar.vue'
 import Button from '../components/m3/Button.vue'
 import Icon from '../components/m3/Icon.vue'
@@ -33,8 +34,10 @@ const route = useRoute()
 const router = useRouter()
 const id = decodeURIComponent(String(route.params.id))
 const isCacheItem = id.startsWith('cache:')
-const item = ref<LocalItem | null>(null)
-const loading = ref(true)
+// 片库页拉过的条目直接拿来画第一帧（片名、封面、选集），换页时海报能直接落进播放器；后台再刷新一次
+const peeked = peekItem(id)
+const item = ref<LocalItem | null>(peeked)
+const loading = ref(!peeked)
 const error = ref('')
 const cur = ref(-1)
 const startAt = ref(0)
@@ -52,40 +55,53 @@ const ctl = canControlDownload()
 // 缓存状态每秒自动刷新（有下载在动/有排队时），缓存完不用重进页面
 useCacheLive()
 
+/** 一进来先播哪集：指定了集数（"接着看"/缓存页进来的）就播那集，否则接着上次看的 */
+function pickInitial(it: LocalItem) {
+  const qEp = Number(route.query.ep)
+  if (Number.isInteger(qEp) && qEp >= 0 && qEp < it.episodes.length) {
+    play(qEp)
+    return
+  }
+  // 先找没看完且有进度的最近一集，否则第一个没看完的，否则第一集
+  const eps = it.episodes
+  let pick = -1
+  let latest = 0
+  eps.forEach((e, i) => {
+    const p = getProg(e.path)
+    if (p && p.pos > 5 && !isWatched(e.path) && p.ts >= latest) {
+      latest = p.ts
+      pick = i
+    }
+  })
+  if (pick < 0) pick = Math.max(0, eps.findIndex((e) => !isWatched(e.path)))
+  if (eps.length) play(pick)
+}
+
 async function load() {
-  loading.value = true
+  loading.value = !item.value
   error.value = ''
   try {
     const it = await fetchItem(id)
     if (!it) throw new Error('这部片子已经不在盒子里了')
     item.value = it
     refreshCacheMarks()
-    // 从"继续观看"/缓存页进来的：指定了集数就直接播那集
-    const qEp = Number(route.query.ep)
-    if (Number.isInteger(qEp) && qEp >= 0 && qEp < it.episodes.length) {
-      play(qEp)
-      return
-    }
-    // 默认接着上次看的：先找没看完且有进度的最近一集，否则第一个没看完的，否则第一集
-    const eps = it.episodes
-    let pick = -1
-    let latest = 0
-    eps.forEach((e, i) => {
-      const p = getProg(e.path)
-      if (p && p.pos > 5 && !isWatched(e.path) && p.ts >= latest) {
-        latest = p.ts
-        pick = i
-      }
-    })
-    if (pick < 0) pick = Math.max(0, eps.findIndex((e) => !isWatched(e.path)))
-    if (eps.length) play(pick)
+    if (cur.value < 0 || cur.value >= it.episodes.length) pickInitial(it)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载失败'
+    const msg = e instanceof Error ? e.message : '加载失败'
+    // 手头已经有这部片子的数据时，网络抖一下不打断观看；片子真的没了才报
+    if (!item.value || msg.includes('不在盒子里')) {
+      item.value = null
+      error.value = msg
+    }
   } finally {
     loading.value = false
   }
 }
-onMounted(load)
+if (peeked) pickInitial(peeked)
+const loaded = load()
+// 没有现成数据（直接打开链接等）：换页动画稍等一下数据，让海报有地方落
+if (!peeked) holdTransition(loaded)
+const cover = computed(() => (item.value?.cover ? coverURL(item.value.cover) : ''))
 
 function play(i: number) {
   const ep = item.value?.episodes[i]
@@ -239,11 +255,14 @@ const playerTitle = computed(() =>
         <div ref="stickEl" class="stick fc-edge" :class="{ on: stickScrolled }">
           <TopAppBar :title="item?.title ?? ''" back flat />
           <!-- 播放器：圆角矩形，左右和下面的卡片对齐（全屏时播放器整个提到最上层铺满，不受这层圆角影响） -->
-          <div class="playerbox">
+          <div class="playerbox" :data-hero="`local:${route.params.id}`" data-hero-p="1">
             <VideoPlayer
               :src="epSrc"
               kind="mp4"
               :series-key="`local:${id}`"
+              :cover="cover"
+              :hero-key="`local:${route.params.id}`"
+              idle-hint=""
               :title="playerTitle"
               :start-at="startAt"
               :message="error"

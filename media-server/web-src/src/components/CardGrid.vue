@@ -25,7 +25,14 @@ useSentinel(sentinel, () => emit('more'))
 <template>
   <div class="cardgrid">
     <div v-if="cards.length" class="grid">
-      <PosterCard v-for="c in cards" :key="c.id" :card="c" :sub="sub ? sub(c) : undefined" />
+      <!-- 依次浮上来；翻页加载的那一批从头错开（每页 24 个） -->
+      <PosterCard
+        v-for="(c, i) in cards"
+        :key="c.id"
+        v-reveal="i % 24"
+        :card="c"
+        :sub="sub ? sub(c) : undefined"
+      />
     </div>
     <div v-else-if="loading" class="grid">
       <div v-for="i in 12" :key="i" class="sk">

@@ -225,15 +225,17 @@ const cellMin = useFitCells(grid, { base: 76, deps: [() => eps.value.length, mod
       </div>
     </div>
 
-    <!-- 多选模式的底部操作条：一直贴在屏幕底部 -->
-    <div v-if="mode" class="selbar">
-      <div class="grow t-body-l">
-        已选 <b>{{ picked.length }}</b> 集<span v-if="picked.length" class="muted"> · 共 {{ fmtSize(pickedSize) }}</span>
+    <!-- 多选模式的底部操作条：一直贴在屏幕底部，进入多选时从下面弹上来 -->
+    <Transition name="bar-rise">
+      <div v-if="mode" class="selbar">
+        <div class="grow t-body-l">
+          已选 <b>{{ picked.length }}</b> 集<span v-if="picked.length" class="muted"> · 共 {{ fmtSize(pickedSize) }}</span>
+        </div>
+        <Button variant="filled" :danger="mode === 'delete'" :disabled="!picked.length" @click="commit">
+          {{ mode === 'cache' ? '开始缓存' : '删除' }}
+        </Button>
       </div>
-      <Button variant="filled" :danger="mode === 'delete'" :disabled="!picked.length" @click="commit">
-        {{ mode === 'cache' ? '开始缓存' : '删除' }}
-      </Button>
-    </div>
+    </Transition>
 
     <BottomSheet :model-value="confirming" title="删除缓存" @update:model-value="confirming = false">
       <p class="del-text t-body-l">

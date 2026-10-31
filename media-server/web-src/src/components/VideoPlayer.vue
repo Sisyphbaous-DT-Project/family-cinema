@@ -27,6 +27,12 @@ const props = defineProps<{
   message?: string
   hasPrev?: boolean
   hasNext?: boolean
+  /** 封面：视频第一帧出来前铺在播放器里（模糊背景 + 中间一张海报），换页时海报从列表飞到这里 */
+  cover?: string
+  /** 中间那张海报的换页主角键（见 composables/motion.ts） */
+  heroKey?: string
+  /** 没有播放地址时的提示；传空字符串就不显示 */
+  idleHint?: string
 }>()
 const emit = defineEmits<{
   (e: 'prev'): void
@@ -68,6 +74,20 @@ let recoverTries = 0
 // 起播位置还没跳到位时不上报进度：此时 currentTime 还是 0，上报会把已存的进度冲成 0
 let posReady = true
 
+// 封面什么时候化开：视频画面就位（第一帧或跳到上次的位置）之后；
+// 刚打开页面时至少留一会儿，让从列表飞过来的海报先落稳，再化成视频
+const framed = ref(false)
+const coverUntil = Date.now() + 900
+let loadSeq = 0 // 换了集就作废上一集还没到点的"化开"
+function markFramed() {
+  if (framed.value) return
+  const wait = coverUntil - Date.now()
+  const seq = loadSeq
+  if (wait > 0) setTimeout(() => seq === loadSeq && (framed.value = true), wait)
+  else framed.value = true
+}
+const coverBg = computed(() => (props.cover ? { backgroundImage: `url(${JSON.stringify(props.cover)})` } : undefined))
+
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
 // 判定是不是手机不能用窗口宽度：横屏后 innerWidth 变大，判定会翻车，
 // 导致"谁把屏幕转横的谁负责转回来"里的解锁被跳过（返回键回竖屏失效的 bug）。
@@ -92,6 +112,8 @@ function destroy() {
 
 function load() {
   destroy()
+  framed.value = false
+  loadSeq++
   playError.value = ''
   recoverTries = 0
   const v = video.value
@@ -105,7 +127,10 @@ function load() {
   lastProgressEmit = Date.now() // 起播后 5 秒内不触发定时保存（durationchange 等事件也会走到这里）
   const begin = () => {
     if (startAt) {
-      v.addEventListener('seeked', () => (posReady = true), { once: true })
+      v.addEventListener('seeked', () => {
+        posReady = true
+        markFramed()
+      }, { once: true })
       v.currentTime = startAt
     }
     v.play().catch(() => {
@@ -182,6 +207,7 @@ function onPlay() {
 }
 function onLoadedData() {
   syncSr()
+  if (posReady) markFramed()
 }
 function onPause() {
   playing.value = false
@@ -466,6 +492,14 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
       @contextmenu.prevent />
     <canvas v-show="srActive" ref="srCanvas" class="video sr-output" @webglcontextlost.prevent="onSrContextLost" />
 
+    <!-- 封面：视频画面出来前先铺着，出来后慢慢化开 -->
+    <Transition name="vcover">
+      <div v-if="cover && !framed" class="vcover">
+        <div class="vc-bg" :style="coverBg" />
+        <img class="vc-poster" :src="cover" alt="" :data-hero="heroKey" data-hero-p="2" />
+      </div>
+    </Transition>
+
     <!-- 解析中 / 缓冲中 -->
     <div v-if="resolving || (buffering && src && !overlayMsg)" class="center-state"><Spinner :size="48" /></div>
 
@@ -476,7 +510,7 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
     </div>
 
     <!-- 没有播放地址时的占位 -->
-    <div v-if="!src && !resolving && !overlayMsg" class="center-state hint t-body-m">选择下方的片源和集数开始播放</div>
+    <div v-if="!src && !resolving && !overlayMsg && idleHint !== ''" class="center-state hint t-body-m">{{ idleHint ?? '选择下方的片源和集数开始播放' }}</div>
 
     <!-- 长按倍速、快进快退、改倍速的提示 -->
     <div v-if="holding" class="toast t-label-l">{{ holdPick == null ? `${HOLD_RATE} 倍速播放中` : `松开手指，就一直用 ${holdPick} 倍速` }}</div>
@@ -573,6 +607,16 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
 .stage.idle { cursor: none; }
 .video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
 .video.sr-source { opacity: 0; }
+/* 封面：模糊放大的背景 + 中间一张带阴影的海报；化开时海报略微放大、整层淡出 */
+.vcover { position: absolute; inset: 0; overflow: hidden; pointer-events: none; background: #000; }
+.vc-bg { position: absolute; inset: -32px; background-size: cover; background-position: center; filter: blur(26px) saturate(1.25) brightness(0.55); transform: scale(1.1); }
+.vc-poster { position: absolute; top: 9%; left: 50%; height: 82%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 10px; box-shadow: 0 10px 28px rgb(0 0 0 / 0.45); transform: translateX(-50%); }
+.vcover-enter-active { transition: opacity 260ms ease; }
+.vcover-enter-from { opacity: 0; }
+.vcover-leave-active { transition: opacity 700ms ease; }
+.vcover-leave-active .vc-poster { transition: transform 900ms var(--ease-out-expo), opacity 500ms ease; }
+.vcover-leave-to { opacity: 0; }
+.vcover-leave-to .vc-poster { transform: translateX(-50%) scale(1.08); opacity: 0; }
 .sr-output { pointer-events: none; }
 .grow { flex: 1; min-width: 0; }
 

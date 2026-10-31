@@ -23,8 +23,8 @@ import { snackbar } from '../../composables/snackbar'
   transform: translateX(-50%);
 }
 @media (min-width: 840px) { .snackbar { bottom: 24px; } }
-.snack-enter-active { transition: opacity 150ms linear, transform 300ms var(--md-ease-emphasized-decel); }
-.snack-leave-active { transition: opacity 100ms linear; }
-.snack-enter-from { opacity: 0; transform: translate(-50%, 16px); }
-.snack-leave-to { opacity: 0; }
+.snack-enter-active { transition: opacity 180ms linear, transform 520ms var(--ease-spring); }
+.snack-leave-active { transition: opacity 160ms ease-in, transform 200ms var(--ease-exit); }
+.snack-enter-from { opacity: 0; transform: translate(-50%, 20px) scale(0.9); }
+.snack-leave-to { opacity: 0; transform: translate(-50%, 8px) scale(0.96); }
 </style>

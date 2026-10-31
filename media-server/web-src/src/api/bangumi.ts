@@ -20,6 +20,16 @@ function bridge(): BgmBridge | null {
 
 export class BgmError extends Error {}
 
+// 番剧详情记 10 分钟：详情页 → 播放页 → 返回详情页都用同一份，页面一打开就有内容（换页动画能直接落在海报上）
+const SUBJECT_TTL = 10 * 60_000
+const subjectMemo = new Map<number, { at: number; p: Promise<Subject>; v?: Subject }>()
+
+/** 已经取到手的番剧详情（没有或过期了返回 null），给页面第一帧直接画出来用 */
+export function peekSubject(id: number): Subject | null {
+  const hit = subjectMemo.get(id)
+  return hit && Date.now() - hit.at < SUBJECT_TTL ? hit.v ?? null : null
+}
+
 /** 统一请求入口：App 走桥（同步返回 JSON 字符串），浏览器走 fetch */
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   if (isOffline()) throw new BgmError(OFFLINE_MSG)
@@ -167,9 +177,18 @@ export const bangumi = {
   },
 
   /** 番剧详情 */
-  async subject(id: number, signal?: AbortSignal): Promise<Subject> {
-    const raw = await request<Parameters<typeof subjectOf>[0]>('GET', `/v0/subjects/${id}`, undefined, signal)
-    return subjectOf(raw)
+  subject(id: number, signal?: AbortSignal): Promise<Subject> {
+    const load = () => request<Parameters<typeof subjectOf>[0]>('GET', `/v0/subjects/${id}`, undefined, signal).then(subjectOf)
+    if (signal) return load()
+    const hit = subjectMemo.get(id)
+    if (hit && Date.now() - hit.at < SUBJECT_TTL) return hit.p
+    const entry: { at: number; p: Promise<Subject>; v?: Subject } = { at: Date.now(), p: load() }
+    subjectMemo.set(id, entry)
+    entry.p.then(
+      (v) => (entry.v = v),
+      () => subjectMemo.get(id) === entry && subjectMemo.delete(id), // 失败的不记，下次重新取
+    )
+    return entry.p
   },
 
   /** 本篇剧集列表（上游每页最多 100，最多翻 5 页，与后端一致） */
