@@ -64,6 +64,9 @@ type SpeedResult struct {
 // TorrentTask 下载任务
 type TorrentTask struct {
 	ID         string   `json:"id"`
+	Kind       string   `json:"kind,omitempty"`
+	SourceIP   string   `json:"sourceIP,omitempty"`
+	NextTaskID string   `json:"nextTaskId,omitempty"`
 	Magnet     string   `json:"magnet"`
 	Name       string   `json:"name"`
 	Category   string   `json:"category"` // movie | series
@@ -408,10 +411,10 @@ func finishDownload(id string, ad *activeDownload) {
 	fail := ""
 	for _, f := range t.Files() {
 		rel := filepath.Base(f.Path())
-		// 只保留视频与压缩包（压缩包留待后续自动解压），其余杂物丢弃
+		// 视频、压缩包和字幕保留，其余杂物丢弃
 		lower := strings.ToLower(rel)
 		ext := strings.ToLower(filepath.Ext(rel))
-		keep := videoExts[ext] || archiveExts[ext] || isSecondaryVolume(rel)
+		keep := videoExts[ext] || archiveExts[ext] || isSecondaryVolume(rel) || isDownloadSubtitle(rel)
 		if !keep || strings.HasPrefix(lower, "sample") || strings.HasPrefix(lower, "www.") {
 			continue
 		}
@@ -549,6 +552,15 @@ func uniquePath(p string) string {
 
 // StopTask 停止任务
 func StopTask(id string) error {
+	if strings.HasPrefix(id, "upload-") {
+		return stopUpload(id)
+	}
+	if strings.HasPrefix(id, "media-") {
+		if stopMediaProcTask(id) {
+			return nil
+		}
+		return fmt.Errorf("任务不存在或已经结束")
+	}
 	if stopAnimeTask(id) { // 番剧"下载到盒子"的任务（见 anime_download.go）
 		return nil
 	}
@@ -570,11 +582,12 @@ func StopTask(id string) error {
 	return nil
 }
 
-// ListTasks 任务列表（倒序）。番剧"下载到盒子"的任务排在前面（见 anime_download.go）
+// ListTasks 合并番剧、BT、上传与媒体处理任务。
 func ListTasks() []TorrentTask {
 	anime := animeTaskList()
+	extra := append(mediaProcTasks(), uploadTasks()...)
 	if bt == nil {
-		return anime
+		return append(anime, extra...)
 	}
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
@@ -585,6 +598,7 @@ func ListTasks() []TorrentTask {
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
+	out = append(extra, out...)
 	return append(anime, out...)
 }
 

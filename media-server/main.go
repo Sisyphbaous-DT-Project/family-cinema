@@ -84,7 +84,12 @@ func NewServer() *Server {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			if err := fn(w, r); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				status := http.StatusInternalServerError
+				var statusErr interface{ StatusCode() int }
+				if errors.As(err, &statusErr) {
+					status = statusErr.StatusCode()
+				}
+				http.Error(w, err.Error(), status)
 			}
 		}
 	}
@@ -135,6 +140,7 @@ func NewServer() *Server {
 			http.Error(w, "forbidden path", http.StatusForbidden)
 			return
 		}
+		noteStreamRequest(p)
 		http.ServeFile(w, r, p)
 	})
 
@@ -481,6 +487,18 @@ func NewServer() *Server {
 	mux.HandleFunc("/api/tasks", api(func(w http.ResponseWriter, r *http.Request) error {
 		return writeJSON(w, ListTasks())
 	}))
+	mux.HandleFunc("/api/media/status", api(func(w http.ResponseWriter, r *http.Request) error {
+		return writeJSON(w, mediaProcStatus())
+	}))
+	mux.HandleFunc("/api/media/check-all", api(func(w http.ResponseWriter, r *http.Request) error {
+		if r.Method != http.MethodPost {
+			return errors.New("method not allowed")
+		}
+		if err := mediaProcCheckAll(); err != nil {
+			return err
+		}
+		return writeJSON(w, map[string]any{"ok": true})
+	}))
 	mux.HandleFunc("/api/task/stop", api(func(w http.ResponseWriter, r *http.Request) error {
 		if r.Method != http.MethodPost {
 			return errors.New("method not allowed")
@@ -502,6 +520,13 @@ func NewServer() *Server {
 			return err
 		}
 		return writeJSON(w, res)
+	}))
+	// 上传前先问同名文件是不是正在上传
+	mux.HandleFunc("/api/upload/check", api(func(w http.ResponseWriter, r *http.Request) error {
+		if err := HandleUploadCheck(r); err != nil {
+			return err
+		}
+		return writeJSON(w, map[string]any{"ok": true})
 	}))
 	// 磁盘剩余空间（上传前检查放不放得下）
 	mux.HandleFunc("/api/disk", api(func(w http.ResponseWriter, r *http.Request) error {
@@ -578,16 +603,19 @@ func NewServer() *Server {
 
 // DownloadCard 媒体库里"正在下载"的占位卡片
 type DownloadCard struct {
-	TaskID   string  `json:"taskId"`
-	Title    string  `json:"title"`
-	Category string  `json:"category"`
-	Progress float64 `json:"progress"`
-	SpeedKBs float64 `json:"speedKBs"`
-	Status   string  `json:"status"`
-	Stage    string  `json:"stage,omitempty"`
-	Cover    string  `json:"cover,omitempty"`
-	Total    int64   `json:"total"`
-	Done     int64   `json:"done"`
+	TaskID     string  `json:"taskId"`
+	Kind       string  `json:"kind,omitempty"`
+	Title      string  `json:"title"`
+	Category   string  `json:"category"`
+	Progress   float64 `json:"progress"`
+	SpeedKBs   float64 `json:"speedKBs"`
+	Status     string  `json:"status"`
+	Stage      string  `json:"stage,omitempty"`
+	Cover      string  `json:"cover,omitempty"`
+	Total      int64   `json:"total"`
+	Done       int64   `json:"done"`
+	SourceIP   string  `json:"sourceIP,omitempty"`
+	NextTaskID string  `json:"nextTaskId,omitempty"`
 }
 
 // downloadingCards 未完成的任务转成媒体库卡片。
@@ -602,16 +630,10 @@ func downloadingCards(cat string) []DownloadCard {
 			continue
 		}
 		out = append(out, DownloadCard{
-			TaskID:   t.ID,
-			Title:    t.Name,
-			Category: t.Category,
-			Progress: t.Progress,
-			SpeedKBs: t.SpeedKBs,
-			Status:   t.Status,
-			Stage:    t.Stage,
-			Cover:    t.Cover,
-			Total:    t.BytesTotal,
-			Done:     t.BytesDone,
+			TaskID: t.ID, Kind: t.Kind, Title: t.Name, Category: t.Category,
+			Progress: t.Progress, SpeedKBs: t.SpeedKBs, Status: t.Status, Stage: t.Stage,
+			Cover: t.Cover, Total: t.BytesTotal, Done: t.BytesDone,
+			SourceIP: t.SourceIP, NextTaskID: t.NextTaskID,
 		})
 	}
 	return out
@@ -724,6 +746,7 @@ func main() {
 	if err := initBT(cfg); err != nil {
 		log.Printf("BT 引擎启动失败（测速/下载不可用）: %v", err)
 	}
+	initMediaProc(cfg)
 	// 启动时扫描媒体库
 	go ScanLibrary()
 	// 局域网自动发现应答（App 找盒子用）

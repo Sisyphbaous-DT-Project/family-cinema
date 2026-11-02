@@ -5,32 +5,41 @@ import { fmtSize } from '../../api/local'
 import { api } from '../../api/client'
 import { toast } from '../../composables/snackbar'
 import { useServerTasks } from '../../composables/serverTasks'
+import { isLocalUpload, stopUpload } from '../../composables/uploads'
 import TopAppBar from '../../components/m3/TopAppBar.vue'
 import Button from '../../components/m3/Button.vue'
 import Icon from '../../components/m3/Icon.vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 const { tasks, tasksError: error, refreshTasks: load } = useServerTasks()
+const visibleTasks = computed(() => {
+  const mediaIds = new Set(tasks.value.filter((t) => t.kind === 'media').map((t) => t.id))
+  return tasks.value.filter((t) => !(
+    t.kind === 'upload' && t.status === 'done' && t.nextTaskId && mediaIds.has(t.nextTaskId)
+  ))
+})
 
-const statusText = (t: Task) =>
-  t.status === 'running'
-    ? (t.progress || 0).toFixed(1) + '%'
-    : t.status === 'done'
-      ? '已完成'
-      : t.status === 'error'
-        ? '失败'
-        : t.status === 'processing'
-          ? t.stage || '整理中'
-          : '已停止'
+const isActive = (t: Task) => t.status === 'running' || t.status === 'processing'
+// BT 下载完在整理（解压入库）时停不了，不给按钮
+const canStop = (t: Task) => t.status === 'running' || (t.status === 'processing' && (t.kind === 'media' || t.kind === 'upload'))
+const statusText = (t: Task) => {
+  if (t.kind === 'media' && isActive(t)) return t.stage || '正在检查声音和字幕…'
+  if (t.kind === 'upload' && isActive(t)) return `正在上传 · ${Math.round(t.progress || 0)}%`
+  if (t.status === 'running') return (t.progress || 0).toFixed(1) + '%'
+  if (t.status === 'done') return '已完成'
+  if (t.status === 'error') return '失败'
+  if (t.status === 'processing') return t.stage || '整理中'
+  return '已停止'
+}
 
 const speedText = (t: Task) =>
   t.speedKBs ? (t.speedKBs > 1024 ? (t.speedKBs / 1024).toFixed(2) + ' MB/s' : Math.round(t.speedKBs) + ' KB/s') : ''
 
 async function stop(t: Task) {
   try {
-    const d = await stopTask(t.id)
-    // 后端 HTTP 200 也可能是 ok:false（任务已结束/不存在），不能一律报成功
-    toast(d.ok ? '任务已停止' : '没能停止，任务可能已经结束')
+    // 本机正在传的走上传队列自己停，上传页才会显示"已停止"；后端 HTTP 200 也可能是 ok:false（任务已结束/不存在）
+    const ok = isLocalUpload(t.id) ? await stopUpload(t.id) : (await stopTask(t.id)).ok
+    toast(ok ? '任务已停止' : '没能停止，任务可能已经结束')
     load()
   } catch {
     toast('停止失败')
@@ -72,9 +81,9 @@ async function retryEp(t: Task, file: string) {
 
 <template>
   <div class="page">
-    <TopAppBar title="下载任务" back>
+    <TopAppBar title="任务" back>
       <template #actions>
-        <Button variant="text" small :disabled="!tasks.length" @click="clearRecords">清理记录</Button>
+        <Button variant="text" small :disabled="!visibleTasks.length" @click="clearRecords">清理记录</Button>
       </template>
     </TopAppBar>
 
@@ -85,23 +94,24 @@ async function retryEp(t: Task, file: string) {
         <Button variant="tonal" @click="load">再试一次</Button>
       </div>
 
-      <div v-else-if="!tasks.length" class="state">
+      <div v-else-if="!visibleTasks.length" class="state">
         <Icon name="download" :size="48" />
-        <div class="t-title-m">没有下载任务</div>
+        <div class="t-title-m">没有任务记录</div>
       </div>
 
-      <div v-for="t in tasks" :key="t.id" class="task">
+      <div v-for="t in visibleTasks" :key="t.id" class="task">
         <div class="ttop">
           <span class="t-body-m clamp-1 grow">{{ t.name }}</span>
           <span class="t-label-m" :class="'st-' + t.status">{{ statusText(t) }}</span>
         </div>
         <div class="bar"><i :class="{ done: t.status === 'done' }" :style="{ width: Math.min(100, t.status === 'done' ? 100 : t.progress || 0) + '%' }" /></div>
-        <p v-if="t.status === 'running' && t.stage" class="t-body-s muted stagetext">{{ t.stage }}</p>
+        <p v-if="t.status === 'running' && t.stage && !t.kind" class="t-body-s muted stagetext">{{ t.stage }}</p>
         <div class="t-body-s muted facts">
           <span v-if="t.bytesTotal">{{ fmtSize(t.bytesDone) }} / {{ fmtSize(t.bytesTotal) }}</span>
-          <span v-else-if="t.bytesDone">已下载 {{ fmtSize(t.bytesDone) }}</span>
+          <span v-else-if="t.bytesDone">{{ t.kind === 'upload' ? '已上传' : '已下载' }} {{ fmtSize(t.bytesDone) }}</span>
           <span v-if="speedText(t)">{{ speedText(t) }}</span>
           <span v-if="t.peers">{{ t.peers }} 节点</span>
+          <span v-if="t.sourceIP">来自 {{ t.sourceIP }}</span>
         </div>
         <div v-if="t.animeFailures?.length" class="fails">
           <div v-for="f in failures(t)" :key="f.file" class="failrow">
@@ -126,9 +136,10 @@ async function retryEp(t: Task, file: string) {
             </Button>
           </div>
         </div>
+        <p v-if="t.kind === 'media' && t.status === 'done' && t.stage" class="t-body-s muted stagetext">{{ t.stage }}</p>
         <p v-if="t.error" class="t-body-s err">{{ t.error }}</p>
         <p v-if="t.status === 'done' && t.targetDir" class="t-body-s muted clamp-1">{{ t.targetDir }}</p>
-        <div v-if="t.status === 'running'" class="acts">
+        <div v-if="canStop(t)" class="acts">
           <Button variant="text" small danger @click="stop(t)">停止任务</Button>
         </div>
       </div>

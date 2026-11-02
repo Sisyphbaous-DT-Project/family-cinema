@@ -14,11 +14,14 @@ import (
 
 // Episode 单个视频文件（一集或一部电影）
 type Episode struct {
-	Index    int    `json:"index"` // 集序号，0 表示无法解析（显示为单文件）
-	Title    string `json:"title"` // 干净的文件标题（"第1集" 等）
-	Filename string `json:"filename"`
-	Path     string `json:"path"` // 服务器本地绝对路径
-	Size     int64  `json:"size"`
+	Index       int        `json:"index"` // 集序号，0 表示无法解析（显示为单文件）
+	Title       string     `json:"title"` // 干净的文件标题（"第1集" 等）
+	Filename    string     `json:"filename"`
+	Path        string     `json:"path"` // 服务器本地绝对路径
+	Size        int64      `json:"size"`
+	ProgressKey string     `json:"progressKey,omitempty"`
+	AudioLang   string     `json:"audioLang,omitempty"`
+	Subtitles   []Subtitle `json:"subtitles,omitempty"`
 }
 
 // MediaItem 一个"片"（目录或根级单文件）
@@ -381,6 +384,7 @@ func ScanLibrary() {
 	movieItems := scanDir(cfg.MovieRoot, "movie")
 	seriesItems := scanDir(cfg.SeriesRoot, "series")
 	all := append(movieItems, seriesItems...)
+	mediaProcScan(all)
 	library.mu.Lock()
 	library.items = all
 	library.lastScan = time.Now()

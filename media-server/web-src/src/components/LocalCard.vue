@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { coverURL, type LocalItem } from '../api/local'
+import { coverURL, progKey, type LocalItem } from '../api/local'
 import { progRatio } from '../composables/progress'
 import Icon from './m3/Icon.vue'
 
@@ -15,7 +15,7 @@ const ratio = computed(() => {
   void props.tick
   const eps = props.item.episodes
   if (!eps.length) return 0
-  return eps.reduce((s, e) => s + progRatio(e.path), 0) / eps.length
+  return eps.reduce((s, e) => s + progRatio(progKey(e)), 0) / eps.length
 })
 // 卡片下面一行：剧写"共 N 集"；单个文件的在电影电视剧里写"电影"，在番剧里写"1 集"（文件大小老人家看不懂，不写）
 const sub = computed(() => (epCount.value > 1 ? `共 ${epCount.value} 集` : props.item.category === 'series' ? '1 集' : '电影'))

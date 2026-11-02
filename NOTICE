@@ -14,6 +14,10 @@ license terms. In particular:
   hls.js also carries the Brightcove copyright notice in its upstream license.
 - Bundled Anime4K.js code, Copyright 2023 もにょ～ん, MIT.
 - Anime4K shaders, Copyright 2019 bloc97, MIT.
+- Bundled libpgs code, Copyright 2024 David Schulte, MIT.
+
+FFmpeg (ffmpeg / ffprobe) is an optional external tool and is not included
+in this repository or its builds.
 
 These components are not relicensed under the project's Apache-2.0 terms.
 Their original notices are retained in THIRD_PARTY_NOTICES.md,

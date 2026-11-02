@@ -26,6 +26,7 @@ type Config struct {
 	BTMaxConns  int            `json:"btMaxConns"`  // 单个种子的已建立连接上限
 	BTUPnP      bool           `json:"btUPnP"`      // 自动向路由器申请端口映射，让 peer 能主动连进来
 	Anime       AnimeConfig    `json:"anime"`       // 番剧聚合（Bangumi + 规则 + 播放代理）
+	Media       MediaConfig    `json:"media"`       // 声音转换与字幕提取
 }
 
 // AnimeConfig 番剧聚合配置。目录留空表示放在可执行文件同目录下（rules/、anime-cache/），
@@ -79,6 +80,7 @@ func defaultConfig() Config {
 		BTMaxConns:  80,
 		BTUPnP:      true,
 		Anime:       AnimeConfig{Enabled: true, ImgCacheMB: 300, RuleSync: true},
+		Media:       MediaConfig{Enabled: true},
 	}
 }
 

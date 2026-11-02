@@ -14,6 +14,7 @@
 | Material Color Utilities | https://github.com/material-foundation/material-color-utilities | Apache-2.0，Material Eng / Material Foundation | 打包进 `media-server/web/app.js` |
 | Anime4K.js | https://github.com/monyone/Anime4K.js | MIT，Copyright 2023 もにょ～ん | 打包进 `media-server/web/app.js` |
 | Anime4K | https://github.com/bloc97/Anime4K | MIT，Copyright 2019 bloc97 | 着色器经 Anime4K.js 打包进 `media-server/web/app.js` |
+| libpgs | https://github.com/Arcus92/libpgs-js | MIT，Copyright 2024 David Schulte | 图片字幕（PGS）渲染，主线程与 worker 代码都打包进 `media-server/web/app.js`，许可证 `third_party/licenses/libpgs-MIT.txt` |
 | gomedia | https://github.com/yapingcat/gomedia | MIT，Copyright 2021 caoyaping | TS 解复用器经修改用于 `media-server/internal/anime/dl/ts_demuxer.go`，许可证 `third_party/licenses/gomedia-MIT.txt` |
 
 KazumiRules 的许可证历史显示其初始许可提交即为 MIT。项目旧记录曾误写为 GPL-3.0，公开版已更正；当前规则文件及其 MIT 许可证一并保留。
@@ -26,6 +27,10 @@ PanSou 构建脚本固定上游提交 `221665fb2c9279f22af4684ea2d8c0c331eac1cc`
 - 网页依赖及精确版本见 `media-server/web-src/package.json` 与 `package-lock.json`。
 - Android 使用 AndroidX 与 NanoHTTPD；NanoHTTPD 上游为 BSD-3-Clause。
 - 当前 npm lockfile 的许可字段盘点为：MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC、MPL-2.0。未发现 GPL/AGPL 许可字段；MPL-2.0 的文件级义务仍由对应组件的使用者保留。
+
+## 可选的外部工具（不随仓库分发）
+
+声音转换和字幕提取调用 FFmpeg 的 `ffmpeg` / `ffprobe` 命令行程序。常见的静态构建（如 johnvansickle.com 的 Linux 版）按 GPLv3 分发，**本仓库不包含、也不打包这两个程序**，代码只按路径启动外部进程；没装时该功能自动关闭，其它功能不受影响。自行下载使用时，请遵守所用构建的许可条款。
 
 许可证全文及依赖自身的 NOTICE（如上游提供）应随相应二进制或源码再分发。本仓库保存了直接打包/分发组件的主要许可证，位于 `third_party/licenses/`；Go module、npm 与 Gradle 包在获取时仍带有各自上游许可证。
 

@@ -16,6 +16,9 @@ const post = <T>(path: string, body: unknown): Promise<T> =>
 // ---------- 下载任务 ----------
 export interface Task {
   id: string
+  kind?: string // 空 = 原下载任务；upload = 上传；media = 声音和字幕检查/转换
+  sourceIP?: string
+  nextTaskId?: string
   name: string
   category: 'movie' | 'series'
   status: string // running | done | error | stopped | processing
@@ -48,6 +51,17 @@ export interface Task {
 export const fetchTasks = () => req<Task[]>('/tasks')
 export const stopTask = (id: string) => post<{ ok: boolean }>('/task/stop', { id })
 export const clearTaskRecords = () => post<{ cleared: number }>('/manage/clear-tasks', {})
+
+// ---------- 声音和字幕检查 ----------
+export interface MediaStatus {
+  enabled: boolean
+  reason?: string
+  checked?: number
+  pending?: number
+  current?: string | { name?: string; title?: string; path?: string; stage?: string }
+}
+export const fetchMediaStatus = () => req<MediaStatus>('/media/status')
+export const checkAllMedia = () => post<{ ok: boolean }>('/media/check-all', {})
 
 // ---------- 管理（统计/改名/封面/删除） ----------
 export interface ManageItem {

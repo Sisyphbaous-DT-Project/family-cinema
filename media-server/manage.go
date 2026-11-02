@@ -15,6 +15,61 @@ type DeleteResult struct {
 	FreedH  string `json:"freedHuman"`
 }
 
+type mediaSidecar struct {
+	path   string
+	suffix string
+	size   int64
+}
+
+func sidecarSubtitleFiles(videoPath string) []mediaSidecar {
+	if !videoExts[strings.ToLower(filepath.Ext(videoPath))] {
+		return nil
+	}
+	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
+	entries, err := os.ReadDir(filepath.Dir(videoPath))
+	if err != nil {
+		return nil
+	}
+	// 同目录有 Film 和 Film.Extended 时，Film.Extended.chs.srt 归后者，删改前者不能带走它
+	bases := mediaDirVideoBases(entries)
+	var out []mediaSidecar
+	for _, e := range entries {
+		if e.IsDir() || !isDownloadSubtitle(e.Name()) {
+			continue
+		}
+		if _, ok := mediaSidecarRest(base, e.Name(), bases); !ok {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, mediaSidecar{
+			path: filepath.Join(filepath.Dir(videoPath), e.Name()), suffix: e.Name()[len(base):], size: info.Size(),
+		})
+	}
+	return out
+}
+
+func removeMediaFile(path string) (int64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("文件不存在")
+	}
+	if err := os.Remove(path); err != nil {
+		return 0, fmt.Errorf("删除失败: %v", err)
+	}
+	size := fi.Size()
+	for _, sub := range sidecarSubtitleFiles(path) {
+		if err := os.Remove(sub.path); err == nil {
+			size += sub.size
+		} else if !os.IsNotExist(err) {
+			return size, fmt.Errorf("字幕文件删除失败: %v", err)
+		}
+	}
+	return size, nil
+}
+
 // DeleteMedia 删除媒体：传 id 删整部（目录或单文件），传 path 删单个文件。
 // 为了安全，只允许删媒体根目录内的路径。
 func DeleteMedia(id, path string, force bool) (*DeleteResult, error) {
@@ -23,16 +78,12 @@ func DeleteMedia(id, path string, force bool) (*DeleteResult, error) {
 		if !safeMediaPath(path) {
 			return nil, fmt.Errorf("路径不在媒体目录内，拒绝删除")
 		}
-		fi, err := os.Stat(path)
+		if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+			return nil, fmt.Errorf("请选择要删除的视频文件")
+		}
+		size, err := removeMediaFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("文件不存在")
-		}
-		if fi.IsDir() {
-			return nil, fmt.Errorf("这是目录，请用条目删除")
-		}
-		size := fi.Size()
-		if err := os.Remove(path); err != nil {
-			return nil, fmt.Errorf("删除失败: %v", err)
+			return nil, err
 		}
 		return &DeleteResult{OK: true, Removed: filepath.Base(path), Freed: size, FreedH: humanSize(size)}, nil
 	}
@@ -69,8 +120,10 @@ func DeleteMedia(id, path string, force bool) (*DeleteResult, error) {
 			return nil, fmt.Errorf("删除失败: %v", err)
 		}
 	} else {
-		if err := os.Remove(it.Path); err != nil {
-			return nil, fmt.Errorf("删除失败: %v", err)
+		var err error
+		size, err = removeMediaFile(it.Path)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return &DeleteResult{OK: true, Removed: it.Title, Freed: size, FreedH: humanSize(size)}, nil
@@ -100,7 +153,7 @@ func hasForeignFiles(dir string) (string, error) {
 				break
 			}
 		}
-		if isCover || ext == ".nfo" || ext == ".srt" || ext == ".ass" || ext == ".txt" {
+		if isCover || ext == ".nfo" || ext == ".srt" || ext == ".ass" || ext == ".ssa" || ext == ".vtt" || ext == ".sup" || ext == ".mks" || ext == ".txt" {
 			continue
 		}
 		return n, nil
@@ -139,8 +192,23 @@ func RenameMedia(id, newName string) error {
 	if _, err := os.Stat(target); err == nil {
 		return fmt.Errorf("已存在同名条目：%s", clean)
 	}
+	var sidecars []mediaSidecar
+	newBase := strings.TrimSuffix(filepath.Base(target), filepath.Ext(target))
+	if !it.IsDir {
+		sidecars = sidecarSubtitleFiles(it.Path)
+		for _, sub := range sidecars {
+			if _, err := os.Stat(filepath.Join(dir, newBase+sub.suffix)); err == nil {
+				return fmt.Errorf("已存在同名字幕：%s", newBase+sub.suffix)
+			}
+		}
+	}
 	if err := os.Rename(it.Path, target); err != nil {
 		return fmt.Errorf("重命名失败: %v", err)
+	}
+	for _, sub := range sidecars {
+		if err := os.Rename(sub.path, filepath.Join(dir, newBase+sub.suffix)); err != nil {
+			return fmt.Errorf("字幕文件改名失败: %v", err)
+		}
 	}
 	return nil
 }
@@ -365,7 +433,7 @@ func withinDir(p, dir string) bool {
 
 // ClearFinishedTasks 清掉已结束的任务记录（不动磁盘文件）
 func ClearFinishedTasks() int {
-	cleared := clearFinishedAnimeTasks()
+	cleared := clearFinishedAnimeTasks() + clearFinishedMediaProcTasks() + clearFinishedUploads()
 	if bt == nil {
 		return cleared
 	}

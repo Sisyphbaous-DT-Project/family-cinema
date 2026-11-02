@@ -7,7 +7,7 @@
 //  - 上方一条状态说明：正在下载哪一集、还有几集在排队
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { epLabel, fmtSize, type LocalItem } from '../api/local'
+import { epLabel, fmtSize, progKey, type LocalEpisode, type LocalItem } from '../api/local'
 import { isWatched, progRatio } from '../composables/progress'
 import { cacheState, cancelCache, deleteCache } from '../composables/cache'
 import { cacheLocalEp, STATE_TEXT } from '../composables/localCache'
@@ -145,15 +145,15 @@ const busyLines = computed(() => {
 })
 
 // ---------- 方块 ----------
-const seen = (i: number) => !mode.value && i !== props.cur && isWatched(eps.value[i].path)
-function chipClass(path: string, i: number) {
-  const k = kind(path)
+const seen = (i: number) => !mode.value && i !== props.cur && isWatched(progKey(eps.value[i]))
+function chipClass(e: LocalEpisode, i: number) {
+  const k = kind(e.path)
   return {
     on: !mode.value && i === props.cur,
-    watched: !mode.value && isWatched(path),
+    watched: !mode.value && isWatched(progKey(e)),
     filling: k === 'running' || k === 'paused',
-    picked: !!mode.value && sel.has(path),
-    off: mode.value === 'cache' && !selectable(path),
+    picked: !!mode.value && sel.has(e.path),
+    off: mode.value === 'cache' && !selectable(e.path),
   }
 }
 function fillPct(path: string): number {
@@ -210,7 +210,7 @@ const cellMin = useFitCells(grid, { base: 76, deps: [() => eps.value.length, mod
           :key="e.path"
           v-ripple
           class="ep"
-          :class="chipClass(e.path, i)"
+          :class="chipClass(e, i)"
           :style="{ '--p': fillPct(e.path) + '%' }"
           type="button"
           @click="onChip(i)"
@@ -220,7 +220,7 @@ const cellMin = useFitCells(grid, { base: 76, deps: [() => eps.value.length, mod
           </span>
           <span class="lab">{{ label(i) }}<span v-if="stText(e.path)" class="st" :class="'st-' + kind(e.path)">（{{ stText(e.path) }}）</span></span>
           <Icon v-if="seen(i)" name="check" :size="12" class="seen" />
-          <i v-if="!mode && progRatio(e.path) > 0 && !isWatched(e.path)" class="wbar"><i :style="{ width: Math.round(progRatio(e.path) * 100) + '%' }" /></i>
+          <i v-if="!mode && progRatio(progKey(e)) > 0 && !isWatched(progKey(e))" class="wbar"><i :style="{ width: Math.round(progRatio(progKey(e)) * 100) + '%' }" /></i>
         </button>
       </div>
     </div>

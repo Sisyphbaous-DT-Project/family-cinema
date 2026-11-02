@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { coverURL, epLabel, fetchLibrary, fmtSize, rescan, type DownloadingCard, type LocalCategory, type LocalItem } from '../api/local'
+import { coverURL, epLabel, fetchLibrary, fmtSize, progKey, rescan, type DownloadingCard, type LocalCategory, type LocalItem } from '../api/local'
 import { api } from '../api/client'
+import { stopTask } from '../api/manage'
+import { isLocalUpload, stopUpload } from '../composables/uploads'
 import { toast } from '../composables/snackbar'
 import { useServerTasks } from '../composables/serverTasks'
 import { isOffline, refreshCacheMarks } from '../composables/cache'
@@ -92,12 +94,15 @@ watch(serverTasks, (list) => {
     .filter((t) => t.category === cat && (t.status === 'running' || t.status === 'processing'))
     .map((t) => ({
       taskId: t.id,
+      kind: t.kind,
       title: t.name,
       category: cat,
       progress: t.progress,
       speedKBs: t.speedKBs,
       status: t.status,
       stage: t.stage,
+      sourceIP: t.sourceIP,
+      nextTaskId: t.nextTaskId,
       cover: t.cover,
       animeFiles: t.animeFiles,
       files: t.files,
@@ -130,9 +135,14 @@ onActivated(() => {
 const empty = computed(() => !loading.value && !error.value && !items.value.length && !downloading.value.length)
 const pct = (p: number) => Math.max(0, Math.min(100, Math.round(p || 0)))
 
-/** 盒子下载任务的状态，写成大白话 */
+/** 盒子任务的状态，写成大白话 */
 function dlText(d: DownloadingCard): string {
   const speed = d.speedKBs > 0 ? ` · 每秒 ${fmtSize(d.speedKBs * 1024)}` : ''
+  if (d.kind === 'upload') {
+    const source = d.sourceIP ? ` · 来自 ${d.sourceIP}` : ''
+    return `正在上传 ${d.title} · ${pct(d.progress)}%${speed}${source}`
+  }
+  if (d.kind === 'media') return d.stage || '正在检查声音和字幕…'
   const total = d.animeFiles?.length ?? 0
   if (total > 0) {
     const files = new Set(d.files ?? [])
@@ -144,6 +154,22 @@ function dlText(d: DownloadingCard): string {
   }
   if (d.status === 'processing') return d.stage || '下载好了，正在整理…'
   return `已下载 ${pct(d.progress)}%` + (d.speedKBs > 0 ? `，每秒 ${fmtSize(d.speedKBs * 1024)}` : '')
+}
+
+const stopping = ref('')
+async function stopCard(d: DownloadingCard) {
+  if (stopping.value) return
+  stopping.value = d.taskId
+  try {
+    // 本机正在传的走上传队列自己停，上传页才会显示"已停止"
+    const ok = isLocalUpload(d.taskId) ? await stopUpload(d.taskId) : (await stopTask(d.taskId)).ok
+    toast(ok ? '任务已停止' : '没能停止，任务可能已经结束')
+    refreshTasks()
+  } catch {
+    toast('停止失败')
+  } finally {
+    stopping.value = ''
+  }
 }
 
 function activeText(a: NonNullable<DownloadingCard['animeActive']>[number]): string {
@@ -203,7 +229,7 @@ const continueList = computed<ContinueEntry[]>(() => {
     let last = -1
     let lastP: { pos: number; dur: number; ts: number } | null = null
     eps.forEach((ep, ei) => {
-      const p = getProg(ep.path)
+      const p = getProg(progKey(ep))
       if (p && p.dur && p.pos >= MIN_WATCH && (!lastP || (p.ts || 0) >= (lastP.ts || 0))) {
         last = ei
         lastP = p
@@ -293,6 +319,11 @@ const continueList = computed<ContinueEntry[]>(() => {
             <div class="t-body-l clamp-1">{{ d.title }}</div>
             <div class="progress"><i :style="{ width: pct(d.progress) + '%' }" /></div>
             <div class="t-body-m muted">{{ dlText(d) }}</div>
+            <div v-if="d.kind === 'upload' || d.kind === 'media'" class="dacts">
+              <Button variant="text" small danger :disabled="stopping === d.taskId" @click="stopCard(d)">
+                {{ stopping === d.taskId ? '停止中…' : '停止任务' }}
+              </Button>
+            </div>
             <div v-if="d.animeActive?.length || d.animeFailures?.length" class="deps">
               <div v-for="a in d.animeActive" :key="a.file" class="dep">
                 <div class="dehead">
@@ -406,6 +437,7 @@ const continueList = computed<ContinueEntry[]>(() => {
 
 /* 盒子正在下载 */
 .drow { flex-direction: column; gap: 6px; }
+.dacts { display: flex; justify-content: flex-end; }
 .progress { height: 6px; border-radius: 3px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: 3px; background: var(--md-sys-color-primary); transition: width var(--md-dur-long) var(--md-ease-standard); }
 .deps { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }

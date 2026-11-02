@@ -5,19 +5,25 @@ import Hls from 'hls.js/light' // 精简版：去掉字幕/多音轨/DRM，动�
 import { acquireWakeLock, bjson, hasBridge, lockLandscape, releaseWakeLock, unlockOrientation } from '../composables/bridge'
 import { playerPrefs, videoFilter } from '../composables/playerPrefs'
 import { useSuperResolution } from '../composables/useSuperResolution'
+import { useSubtitles } from '../composables/useSubtitles'
 import { usePlayerGestures } from '../composables/usePlayerGestures'
 import { toast } from '../composables/snackbar'
+import type { Subtitle } from '../api/local'
 import IconButton from './m3/IconButton.vue'
 import Spinner from './m3/Spinner.vue'
 import Icon from './m3/Icon.vue'
 import PlayerSettings from './player/PlayerSettings.vue'
+import SubtitleLayer from './player/SubtitleLayer.vue'
 
 const props = defineProps<{
   /** 播放地址（盒子播放代理的相对地址）；为空时只显示占位/提示 */
   src?: string
   kind?: 'hls' | 'mp4'
-  /** 按作品记住超分档位，换集不换键 */
+  /** 按作品记住超分和字幕选择，换集不换键 */
   seriesKey: string
+  /** 只有本地在线条目传入；缓存和离线播放不请求字幕文件 */
+  subtitles?: Subtitle[]
+  audioLang?: string
   title?: string
   /** 起播位置（秒） */
   startAt?: number
@@ -66,6 +72,13 @@ const {
   stop: stopSr,
   contextLost: onSrContextLost,
 } = useSuperResolution(video, srCanvas, () => props.seriesKey)
+const {
+  selected: subtitle,
+  selectedIndex: subtitleIndex,
+  options: subtitleOptions,
+  set: setSubtitle,
+  reset: resetSubtitle,
+} = useSubtitles(() => props.subtitles ?? [], () => props.audioLang, () => props.seriesKey)
 
 let hls: Hls | null = null
 let hideTimer: ReturnType<typeof setTimeout> | undefined
@@ -491,6 +504,8 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
       @timeupdate="onTime" @durationchange="onTime" @progress="onTime" @ended="onEnded"
       @contextmenu.prevent />
     <canvas v-show="srActive" ref="srCanvas" class="video sr-output" @webglcontextlost.prevent="onSrContextLost" />
+    <!-- 字幕独立绘制，位于超分画布之上；镜像只作用于视频，不作用于字幕 -->
+    <SubtitleLayer :video="video" :subtitle="subtitle" :fit="playerPrefs.fit" :lift="controlsVisible" @error="toast($event)" />
 
     <!-- 封面：视频画面出来前先铺着，出来后慢慢化开 -->
     <Transition name="vcover">
@@ -593,7 +608,11 @@ const controlsVisible = computed(() => showControls.value || !playing.value || s
         v-if="showSettings"
         :floating="!isFull"
         :sr-mode="srMode"
+        :subtitles="subtitleOptions"
+        :subtitle-index="subtitleIndex"
         @update:sr-mode="setSrMode"
+        @update:subtitle-index="setSubtitle"
+        @reset:subtitle="resetSubtitle"
         @close="showSettings = false"
         @pip="togglePip"
       />

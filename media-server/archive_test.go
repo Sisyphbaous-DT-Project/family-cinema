@@ -173,3 +173,28 @@ func TestArchiveStemGroupsVolumes(t *testing.T) {
 		t.Errorf("分卷主干名应一致: %q vs %q", a, b)
 	}
 }
+
+func TestExtractKeepsSubtitlesWithoutTemporaryFiles(t *testing.T) {
+	work := t.TempDir()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	video, _ := zw.Create("第01集.mkv")
+	video.Write(fakeMKV())
+	sub, _ := zw.Create("第01集.chs.srt")
+	sub.Write([]byte("1\n00:00:01,000 --> 00:00:02,000\n字幕\n"))
+	zw.Close()
+	archive := filepath.Join(work, "pack.zip")
+	if err := os.WriteFile(archive, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ProcessDownloaded(work, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "第01集.chs.srt")); err != nil {
+		t.Fatalf("字幕没有保留: %v", err)
+	}
+	leftovers, err := filepath.Glob(filepath.Join(work, "*.extracting"))
+	if err != nil || len(leftovers) != 0 {
+		t.Fatalf("存在解压临时文件: %v %v", leftovers, err)
+	}
+}

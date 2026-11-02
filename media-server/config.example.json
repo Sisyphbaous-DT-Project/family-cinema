@@ -32,5 +32,11 @@
     "bangumiUA": "",
     "ruleSync": true,
     "ruleSources": []
+  },
+  "media": {
+    "enabled": true,
+    "ffmpegPath": "",
+    "ffprobePath": "",
+    "stateDir": ""
   }
 }

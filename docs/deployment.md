@@ -22,12 +22,32 @@
 | `btUploadKBs` / `btMaxConns` | BT 上传限速与连接数 |
 | `btUPnP` | 是否尝试路由器 UPnP 端口映射 |
 | `anime` | 番剧聚合、规则目录和缓存配置 |
+| `media` | 声音转换与字幕提取（需要外部 ffmpeg/ffprobe，见下文） |
 
 `rulesDir` 和 `cacheDir` 留空时，番剧模块使用可执行文件旁的 `rules/` 和 `anime-cache/`；规则已内嵌在二进制中。
 
 `anime.ruleSync` 默认开启：服务启动 2 分钟后、之后每天北京时间凌晨 4 点多，从 KazumiRules 的镜像（默认 gh-proxy.org 与 GitCode，可用 `anime.ruleSources` 换成自己的地址，以 `/` 结尾）检查规则，有新版就换上、上游新增的站自动加上、所有镜像都不再列出的站自动下架，并把整套规则写进规则目录，不用重启。规则目录里有规则时只读目录、不再用内嵌的那份；想退回内嵌规则，关掉 `ruleSync` 并删掉规则目录后重启。设置页「播放源」里能看到上次检查结果，也能手动立即检查（接口 `GET/POST /api/anime/rules/sync`）。
 
 服务控制脚本只负责进程，不通过 `MEDIA_MOVIE_ROOT` 等环境变量配置媒体库；实际目录与端口以 `config.json` 或程序默认值为准。
+
+## 可选：声音转换与字幕（ffmpeg / ffprobe）
+
+浏览器和安卓 WebView 放不了 AC3、E-AC3、DTS、TrueHD 这类声音（有画面没声音、不报错），也不显示 MKV 里的字幕。装上 `ffmpeg` 和 `ffprobe` 后，服务会在扫库时逐个检查片子：
+
+- 有浏览器放不了的声音时，在后台把它转成 AAC 并换成 MP4：画面原样复制，所有音轨保留且第一条设为默认，本来就是 AAC/MP3 的音轨直接复制。同一时间只转一部，番剧下载、BT 整理、上传进行中会先等；有人正在看的片子等 10 分钟没人看了再替换。
+- 内嵌的 PGS 图片字幕抽成旁挂 `.sup`，文字字幕转成 `.vtt`（ASS 另存原件）；视频旁同名开头的 `.srt/.ass/.ssa` 外挂字幕自动另转 `.vtt`，GBK 编码也能认。网页放不了的字幕（如老 DVD 的图片字幕）在转声音时原样另存为 `<片名>.subs.mks`，原片删除前一条不丢。
+- 只有新 MP4 的音轨、时长都对得上、字幕都已生成、同名 MP4 不存在时才删除原片；任何一步失败都保留原片并在任务页说明原因。转换后观看进度沿用原片的进度键。
+- 片库管理页的「检查全部片子」会强制重新检查（之前失败或停止的也会重试）。
+
+**本仓库不包含 ffmpeg / ffprobe**（常见静态构建按 GPLv3 分发），请自行下载与设备架构对应的版本，例如 johnvansickle.com 的 Linux 静态构建（ARMv7 盒子用 armhf 版）。默认放在主程序同目录、命名为 `ffmpeg` 和 `ffprobe` 并赋予可执行权限；也可以在 `media` 里写完整路径：
+
+| 字段 | 含义 |
+| --- | --- |
+| `media.enabled` | 默认开启；任一工具缺失或不可执行时自动关闭，其它功能不受影响 |
+| `media.ffmpegPath` / `media.ffprobePath` | 留空 = 可执行文件同目录的 `ffmpeg` / `ffprobe` |
+| `media.stateDir` | 留空 = 可执行文件同目录的 `media-proc/`，保存检查结果、进度对照表和中断恢复信息 |
+
+处理过程中的临时文件以 `.fcwork` 结尾，同名 MP4 替换时原片暂时改名为 `.fcold`；服务重启后只清理和恢复自己登记过的文件，不会结束别的 ffmpeg 进程。相关接口：`GET /api/media/status`、`POST /api/media/check-all`，任务也出现在 `/api/tasks` 里（`kind` 为 `media`）。
 
 ## 部署到参考安卓盒子
 

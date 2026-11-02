@@ -1,11 +1,10 @@
 <script setup lang="ts">
-// 上传本地视频：多选排队传（一个传完再传下一个，盒子 USB 写入和 WiFi 都是瓶颈，并发反而慢）。
-// 流式上传 + 进度 + 磁盘空间预检；中断的半截文件由后端自动清理。
-// 对应旧版 bindUpload/startUpload/runQueue。
-import { onMounted, ref } from 'vue'
+// 上传队列和 XHR 都在模块级 composable 里：离开页面继续传，回来后接着看进度。
+import { computed, onMounted, ref } from 'vue'
 import { fetchDisk } from '../../api/manage'
 import { fmtSize } from '../../api/local'
 import { toast } from '../../composables/snackbar'
+import { enqueueUploads, retryUpload, stopUpload, uploadItems, type UploadItem } from '../../composables/uploads'
 import TopAppBar from '../../components/m3/TopAppBar.vue'
 import Button from '../../components/m3/Button.vue'
 import Icon from '../../components/m3/Icon.vue'
@@ -17,21 +16,16 @@ const VIDEO_EXT = /\.(mkv|mp4|avi|mov|m4v|ts|m2ts|webm|wmv|rm|rmvb|flv|mpg|mpeg|
 
 const files = ref<File[]>([])
 const err = ref('')
-const busy = ref(false)
+const starting = ref(false)
+const busy = computed(() => starting.value)
 const diskText = ref('')
-const dest = ref('new') // new | existing
-const cat = ref('movie')
+const dest = ref<'new' | 'existing'>('new')
+const cat = ref<'movie' | 'series'>('movie')
 const title = ref('')
 const target = ref<FolderItem | null>(null)
 const picker = ref<InstanceType<typeof FolderPicker>>()
-
-interface RowState {
-  name: string
-  pct: number
-  sub: string
-  failed: boolean
-}
-const rows = ref<RowState[]>([])
+const rows = uploadItems
+const stopping = ref('')
 
 onMounted(async () => {
   try {
@@ -45,12 +39,20 @@ onMounted(async () => {
 function addFiles(list: FileList | null) {
   if (!list) return
   let added = 0
+  let duplicates = 0
   for (const f of Array.from(list)) {
     if (!VIDEO_EXT.test(f.name)) continue
+    const duplicate = files.value.some((item) => item.name === f.name && item.size === f.size)
+      || rows.some((item) => item.state !== 'done' && item.name === f.name && item.size === f.size)
+    if (duplicate) {
+      duplicates++
+      continue
+    }
     files.value.push(f)
     added++
   }
-  err.value = added ? '' : '只支持视频文件'
+  if (duplicates) toast(`${duplicates} 个文件已在上传列表里，没有重复添加`)
+  err.value = added || duplicates ? '' : '只支持视频文件'
 }
 
 function removeFile(i: number) {
@@ -59,7 +61,7 @@ function removeFile(i: number) {
 }
 
 function switchDest(v: string) {
-  dest.value = v
+  dest.value = v === 'existing' ? 'existing' : 'new'
   if (v === 'existing') picker.value?.open()
 }
 
@@ -77,75 +79,53 @@ async function start() {
     err.value = '请选择要并入的条目'
     return
   }
-  // 磁盘空间预检：总大小超剩余空间就直接拦下
   const need = files.value.reduce((s, f) => s + f.size, 0)
-  busy.value = true
+  starting.value = true
   err.value = ''
-  rows.value = files.value.map((f) => ({ name: f.name, pct: 0, sub: '等待中', failed: false }))
   try {
     const d = await fetchDisk()
     if (d && d.free && need > d.free) throw new Error(`硬盘空间不足：需要 ${fmtSize(need)}，仅剩 ${d.freeH}`)
-    await runQueue(0)
-    // 传成功的移出列表，失败的留着，修好问题后直接再点"开始上传"重试
-    const failed = rows.value.filter((r) => r.failed).length
-    files.value = files.value.filter((_, i) => rows.value[i]?.failed)
-    if (failed) err.value = `${failed} 个文件上传失败，详见下方红色条目，可再点「开始上传」重试`
-    else toast('上传完成')
+    const result = enqueueUploads(files.value, {
+      // 并入已有条目时分类跟着那个条目走，进度才会显示在对的页面上
+      cat: dest.value === 'existing' && target.value ? target.value.category : cat.value,
+      dest: dest.value,
+      title: title.value.trim(),
+      targetId: dest.value === 'existing' && target.value ? target.value.id : '',
+    })
+    if (result.duplicates.length) toast(`${result.duplicates.length} 个文件已在上传列表里，没有重复添加`)
+    if (result.added) files.value = []
   } catch (e) {
     err.value = String(e instanceof Error ? e.message : '上传失败')
   } finally {
-    busy.value = false
+    starting.value = false
   }
 }
 
-// 顺序传队列里的第 idx 个
-function runQueue(idx: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (idx >= files.value.length) return resolve()
-    const f = files.value[idx]
-    const row = rows.value[idx]
-    const fd = new FormData()
-    // 文本字段必须在文件前 append，后端流式读取靠这个顺序
-    fd.append('cat', cat.value)
-    fd.append('dest', dest.value)
-    fd.append('title', title.value.trim())
-    fd.append('targetId', dest.value === 'existing' && target.value ? target.value.id : '')
-    fd.append('file', f, f.name)
+const rowPct = (row: UploadItem) => row.state === 'done' ? 100 : row.size ? Math.min(99, Math.round(row.loaded * 100 / row.size)) : 0
 
-    const xhr = new XMLHttpRequest()
-    let lastLoaded = 0
-    let lastT = Date.now()
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) return
-      row.pct = Math.round((e.loaded * 100) / e.total)
-      const now = Date.now()
-      if (now - lastT > 800) {
-        const speed = ((e.loaded - lastLoaded) * 1000) / (now - lastT)
-        lastLoaded = e.loaded
-        lastT = now
-        const eta = speed > 0 ? Math.round((e.total - e.loaded) / speed) : 0
-        row.sub = `${fmtSize(e.loaded)} / ${fmtSize(e.total)} · ${fmtSize(speed)}/s · 约剩 ${eta >= 60 ? Math.floor(eta / 60) + ' 分 ' + (eta % 60) + ' 秒' : eta + ' 秒'}`
-      }
-    }
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        row.pct = 100
-        row.sub = '已完成 · ' + fmtSize(f.size)
-        runQueue(idx + 1).then(resolve)
-      } else {
-        row.sub = '失败：' + String(xhr.responseText).slice(0, 80)
-        row.failed = true
-        runQueue(idx + 1).then(resolve) // 这个失败了，不拦着后面的文件
-      }
-    }
-    xhr.onerror = () => {
-      row.sub = '网络中断，半截文件已自动清理'
-      row.failed = true
-      runQueue(idx + 1).then(resolve)
-    }
-    xhr.open('POST', '/api/upload')
-    xhr.send(fd)
-  })
+function rowSub(row: UploadItem): string {
+  if (row.state === 'queued') return '等待中'
+  if (row.state === 'done') return '已完成 · ' + fmtSize(row.size) + (row.nextTaskId ? ' · 已交给盒子检查声音和字幕' : '')
+  if (row.state === 'failed') return '失败：' + row.error
+  if (row.state === 'stopped') return '已停止，可以重新上传'
+  if (!row.speed) return row.loaded ? `${fmtSize(row.loaded)} / ${fmtSize(row.size)} · 正在计算速度…` : '正在开始上传…'
+  const eta = Math.round((row.size - row.loaded) / row.speed)
+  const etaText = eta >= 60 ? Math.floor(eta / 60) + ' 分 ' + (eta % 60) + ' 秒' : eta + ' 秒'
+  return `${fmtSize(row.loaded)} / ${fmtSize(row.size)} · ${fmtSize(row.speed)}/s · 约剩 ${etaText}`
+}
+
+async function stopRow(row: UploadItem) {
+  if (stopping.value) return
+  const queued = row.state === 'queued'
+  stopping.value = row.id
+  try {
+    const ok = await stopUpload(row.id)
+    toast(ok ? (queued ? '已取消排队' : '上传已停止') : '没能停止，可能已经结束')
+  } catch (e) {
+    toast(e instanceof Error ? e.message : '停止失败')
+  } finally {
+    stopping.value = ''
+  }
 }
 </script>
 
@@ -184,15 +164,31 @@ function runQueue(idx: number): Promise<void> {
 
       <p v-if="err" class="errtext t-body-s">{{ err }}</p>
 
-      <!-- 进度 -->
+      <!-- 全局上传队列：离开本页也继续传，回来还能看到 -->
       <div v-if="rows.length" class="progs">
-        <div v-for="r in rows" :key="r.name" class="prow" :class="{ failed: r.failed }">
+        <div v-for="r in rows" :key="r.id" class="prow" :class="{ failed: r.state === 'failed' }">
           <div class="ptop">
             <span class="t-body-m clamp-1 grow">{{ r.name }}</span>
-            <span class="t-label-m">{{ r.pct }}%</span>
+            <span class="t-label-m">{{ rowPct(r) }}%</span>
           </div>
-          <div class="bar"><i :style="{ width: r.pct + '%' }" /></div>
-          <div class="t-body-s muted">{{ r.sub }}</div>
+          <div class="bar"><i :style="{ width: rowPct(r) + '%' }" /></div>
+          <div class="prow-foot">
+            <div class="t-body-s muted grow">{{ rowSub(r) }}</div>
+            <Button
+              v-if="r.state === 'queued' || r.state === 'uploading'"
+              variant="text"
+              small
+              danger
+              :disabled="stopping === r.id"
+              @click="stopRow(r)"
+            >{{ stopping === r.id ? '停止中…' : '停止' }}</Button>
+            <Button
+              v-else-if="r.state === 'failed' || r.state === 'stopped'"
+              variant="text"
+              small
+              @click="retryUpload(r.id)"
+            >重新上传</Button>
+          </div>
         </div>
       </div>
 
@@ -218,6 +214,7 @@ function runQueue(idx: number): Promise<void> {
 .prow { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 16px; background: var(--fc-card); box-shadow: var(--fc-float); }
 .prow.failed { background: var(--md-sys-color-error-container, #ffdad6); }
 .ptop { display: flex; gap: 12px; }
+.prow-foot { display: flex; align-items: center; gap: 8px; }
 .bar { height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--md-sys-color-primary); transition: width 300ms linear; }
 </style>

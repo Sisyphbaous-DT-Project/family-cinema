@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 并入已有条目的选择器：搜索 /api/folders，点选后通过 v-model 回报。
 // 手动添加下载和上传视频共用。
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { coverURL } from '../../api/local'
 import { fetchFolders, type FolderItem } from '../../api/manage'
 import Icon from '../m3/Icon.vue'
@@ -34,6 +34,8 @@ function open() {
   if (!list.value.length) load('')
 }
 defineExpose({ open })
+// 选择器是切到"并入已有"后才挂出来的，父组件那一刻调 open() 会落空，所以挂出来时自己加载一次
+onMounted(open)
 
 function pick(f: FolderItem) {
   selected.value = f

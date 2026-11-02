@@ -2,9 +2,18 @@
 // 离线（或 App 内网络抖动）时回退到原生桥的离线片库（只含已缓存内容）。
 import { hasBridge } from '../composables/bridge'
 import { isOffline, offlineLibrary } from '../composables/cache'
+import { linkProgress } from '../composables/progress'
 import type { Task } from './manage'
 
 export type LocalCategory = 'movie' | 'series'
+
+export interface Subtitle {
+  path: string
+  kind: 'text' | 'pgs'
+  lang?: string
+  title?: string
+  forced?: boolean
+}
 
 export interface LocalEpisode {
   index: number
@@ -12,6 +21,16 @@ export interface LocalEpisode {
   filename: string
   path: string
   size: number
+  progressKey?: string
+  audioLang?: string
+  subtitles?: Subtitle[]
+}
+
+/** 转码换扩展名后仍沿用原片的观看进度；缓存地址和播放地址仍使用 path。 */
+export const progKey = (ep: Pick<LocalEpisode, 'path' | 'progressKey'>) => {
+  // 记下新旧路径的对应，缓存到手机后离线看的进度也能和在线接上
+  if (ep.progressKey) linkProgress(ep.progressKey, ep.path)
+  return ep.progressKey || ep.path
 }
 
 export interface LocalItem {
@@ -28,12 +47,15 @@ export interface LocalItem {
 
 export interface DownloadingCard {
   taskId: string
+  kind?: string
   title: string
   category: LocalCategory
   progress: number
   speedKBs: number
   status: string
   stage?: string
+  sourceIP?: string
+  nextTaskId?: string
   cover?: string
   animeFiles?: string[]
   files?: string[]

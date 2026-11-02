@@ -28,6 +28,14 @@ var archiveExts = map[string]bool{
 	".xz": true, ".txz": true, ".lzma": true,
 }
 
+var downloadSubtitleExts = map[string]bool{
+	".srt": true, ".ass": true, ".ssa": true, ".vtt": true, ".sup": true, ".mks": true,
+}
+
+func isDownloadSubtitle(name string) bool {
+	return downloadSubtitleExts[strings.ToLower(filepath.Ext(name))]
+}
+
 // 分卷压缩包的后续卷（.r00/.part2.rar/.z01 等），解压主卷时库会自动串联，不单独处理
 // Go 的 regexp 不支持负向预查，partN 的首卷排除放在 isSecondaryVolume 里用代码判断
 var (
@@ -62,7 +70,7 @@ type extractResult struct {
 	Skipped []string // 因异常跳过的条目
 }
 
-// ExtractArchive 解压压缩包到 destDir，只提取视频文件（避免把垃圾文件铺满媒体库）
+// ExtractArchive 解压压缩包到 destDir，提取视频和字幕文件（避免把垃圾文件铺满媒体库）
 func ExtractArchive(archivePath, destDir string) (*extractResult, error) {
 	ext := strings.ToLower(filepath.Ext(archivePath))
 	switch ext {
@@ -98,7 +106,7 @@ func extract7Z(path, destDir string) (*extractResult, error) {
 			continue
 		}
 		name := filepath.Base(f.Name)
-		if !videoExts[strings.ToLower(filepath.Ext(name))] {
+		if !videoExts[strings.ToLower(filepath.Ext(name))] && !isDownloadSubtitle(name) {
 			res.Others++
 			continue
 		}
@@ -137,7 +145,7 @@ func extractRAR(path, destDir string) (*extractResult, error) {
 			continue
 		}
 		name := filepath.Base(hdr.Name)
-		if !videoExts[strings.ToLower(filepath.Ext(name))] {
+		if !videoExts[strings.ToLower(filepath.Ext(name))] && !isDownloadSubtitle(name) {
 			res.Others++
 			continue
 		}
@@ -161,7 +169,7 @@ func extractZIP(path, destDir string) (*extractResult, error) {
 			continue
 		}
 		name := filepath.Base(f.Name)
-		if !videoExts[strings.ToLower(filepath.Ext(name))] {
+		if !videoExts[strings.ToLower(filepath.Ext(name))] && !isDownloadSubtitle(name) {
 			res.Others++
 			continue
 		}
@@ -226,7 +234,7 @@ func extractTarStream(path, destDir, compress string) (*extractResult, error) {
 			continue
 		}
 		name := filepath.Base(hdr.Name)
-		if !videoExts[strings.ToLower(filepath.Ext(name))] {
+		if !videoExts[strings.ToLower(filepath.Ext(name))] && !isDownloadSubtitle(name) {
 			res.Others++
 			continue
 		}
@@ -237,7 +245,7 @@ func extractTarStream(path, destDir, compress string) (*extractResult, error) {
 	return res, nil
 }
 
-// writeExtracted 把单个条目写到目标目录，重名时自动加后缀
+// writeExtracted 先写临时名再改名，避免扫库拿到解压了一半的视频。
 func writeExtracted(r io.Reader, destDir, name string, res *extractResult) error {
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
@@ -255,22 +263,35 @@ func writeExtracted(r io.Reader, destDir, name string, res *extractResult) error
 			}
 		}
 	}
-	out, err := os.Create(dst)
+	tmp := dst + ".extracting"
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if os.IsExist(err) {
+		// 上次解压到一半断电或掉盘留下的，是我们自己的临时文件，清掉重来
+		if rmErr := os.Remove(tmp); rmErr == nil {
+			out, err = os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		}
+	}
 	if err != nil {
 		return err
 	}
 	// 32KB 缓冲，盒子内存小，不要一次性读入
 	buf := make([]byte, 32*1024)
-	_, err = io.CopyBuffer(out, r, buf)
+	_, copyErr := io.CopyBuffer(out, r, buf)
 	closeErr := out.Close()
-	if err != nil {
-		os.Remove(dst)
-		return err
-	}
-	if closeErr != nil {
+	if copyErr != nil || closeErr != nil {
+		os.Remove(tmp)
+		if copyErr != nil {
+			return copyErr
+		}
 		return closeErr
 	}
-	res.Videos = append(res.Videos, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if videoExts[strings.ToLower(filepath.Ext(dst))] {
+		res.Videos = append(res.Videos, dst)
+	}
 	return nil
 }
 
@@ -293,7 +314,7 @@ func extractSingleStream(r io.Reader, archivePath, destDir string) (*extractResu
 		name += ".mkv"
 	}
 	res := &extractResult{}
-	if !videoExts[strings.ToLower(filepath.Ext(name))] {
+	if !videoExts[strings.ToLower(filepath.Ext(name))] && !isDownloadSubtitle(name) {
 		res.Others++
 		return res, nil
 	}
@@ -314,7 +335,7 @@ func sanitizeFileName(name string) string {
 }
 
 // VerifyVideo 轻量校验视频可用性：检查文件头魔数与最小体积。
-// 盒子上没有 ffprobe，做完整解码校验不现实；这里只挡住"下载残缺/根本不是视频"的情况。
+// 这里只挡住“下载残缺/根本不是视频”；声音和字幕检查交给媒体处理模块。
 func VerifyVideo(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -380,7 +401,7 @@ func looksLikeVideoHeader(head []byte, ext string) bool {
 }
 
 // ProcessDownloaded 下载完成后的自动整理：
-//  1. 解压压缩包（含分卷），只提取视频
+//  1. 解压压缩包（含分卷），提取视频和字幕
 //  2. 校验解出的视频可用性
 //  3. 校验通过则删除压缩包，失败则保留原包并报告
 //

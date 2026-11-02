@@ -1,18 +1,21 @@
 <script setup lang="ts">
 // 片库管理：统计、改名、换封面、删除（含强制删除二次确认）、补封面、服务端下载缓存清理、清任务记录。
 // 对应旧版管理页的"条目"部分（loadMng/renderMngTable/openEdit/openDelete/loadCache）。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  checkAllMedia,
   coversStatus,
   deleteItem,
   deleteServerCache,
   fetchManageStats,
+  fetchMediaStatus,
   fetchServerCache,
   renameItem,
   setItemCover,
   startCoversFetch,
   type CacheEntry,
   type ManageItem,
+  type MediaStatus,
 } from '../../api/manage'
 import { coverURL } from '../../api/local'
 import { toast } from '../../composables/snackbar'
@@ -30,8 +33,59 @@ const filter = ref('')
 const cat = ref('all')
 const error = ref('')
 const coverJob = ref('')
+const mediaStatus = ref<MediaStatus | null>(null)
+const mediaError = ref('')
+const mediaBusy = ref(false)
+const mediaCurrent = computed(() => {
+  const current = mediaStatus.value?.current
+  if (!current) return ''
+  return typeof current === 'string' ? current : current.stage || current.name || current.title || current.path || ''
+})
+const mediaReason = computed(() => {
+  const status = mediaStatus.value
+  if (!status) return ''
+  const reason = status.reason?.trim() ?? ''
+  if (!status.enabled && /ffmpeg|ffprobe|转码工具/i.test(reason)) {
+    return `盒子上还没装转码工具${reason ? `（${reason}）` : ''}`
+  }
+  return reason || (status.enabled ? '' : '声音和字幕检查暂时不能用')
+})
+
+let mediaTimer: ReturnType<typeof setTimeout> | undefined
+let leaving = false
+async function loadMedia() {
+  clearTimeout(mediaTimer)
+  mediaError.value = ''
+  try {
+    mediaStatus.value = await fetchMediaStatus()
+  } catch (e) {
+    mediaError.value = e instanceof Error ? e.message : '读取检查状态失败'
+  }
+  // 还有片子在排队检查时隔几秒再问一次，卡片上的数字跟着变
+  if (!leaving && (mediaStatus.value?.pending ?? 0) > 0) mediaTimer = setTimeout(loadMedia, 3000)
+}
+onBeforeUnmount(() => {
+  leaving = true
+  clearTimeout(mediaTimer)
+})
+
+async function checkMedia() {
+  if (mediaBusy.value) return
+  mediaBusy.value = true
+  try {
+    const result = await checkAllMedia()
+    if (!result.ok) throw new Error('没能加入检查')
+    toast('已加入检查，会一部一部处理')
+    await loadMedia()
+  } catch (e) {
+    toast(e instanceof Error ? e.message : '加入检查失败')
+  } finally {
+    mediaBusy.value = false
+  }
+}
 
 async function load() {
+  void loadMedia()
   error.value = ''
   try {
     const d = await fetchManageStats()
@@ -237,6 +291,25 @@ async function clearAllCache() {
         </div>
         <div v-if="coverJob" class="t-body-s muted coverjob">{{ coverJob }}</div>
 
+        <!-- 声音和字幕检查：状态由盒子统一记录，电脑和手机看到的是同一份进度 -->
+        <div class="mediacard">
+          <div class="grow">
+            <div class="t-title-m">声音和字幕检查</div>
+            <div v-if="mediaError" class="t-body-s errtext">{{ mediaError }}</div>
+            <template v-else-if="mediaStatus">
+              <div v-if="mediaReason" class="t-body-m muted">{{ mediaReason }}</div>
+              <div class="t-body-m muted">
+                已检查 {{ mediaStatus.checked || 0 }} 个视频 · 还有 {{ mediaStatus.pending || 0 }} 个等着检查
+              </div>
+              <div v-if="mediaCurrent" class="t-body-s muted clamp-1">正在：{{ mediaCurrent }}</div>
+            </template>
+            <div v-else class="t-body-m muted">正在读取检查状态…</div>
+          </div>
+          <Button variant="tonal" small :disabled="!mediaStatus?.enabled || mediaBusy" @click="checkMedia">
+            {{ mediaBusy ? '正在加入…' : '检查全部片子' }}
+          </Button>
+        </div>
+
         <div class="toolbar">
           <SegmentedButton v-model="cat" :options="[{ value: 'all', label: '全部' }, { value: 'movie', label: '电影电视剧' }, { value: 'series', label: '番剧' }]" />
           <input v-model="filter" class="textin grow" type="search" placeholder="筛选名称" />
@@ -354,6 +427,8 @@ async function clearAllCache() {
 .sval { font-size: 20px; font-weight: 500; margin-top: 4px; }
 .sval small { font-size: 12px; font-weight: 400; margin-left: 2px; }
 .coverjob { margin: 0 4px 12px; }
+.mediacard { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding: 16px; border-radius: var(--fc-radius); background: var(--fc-card); box-shadow: var(--fc-float); }
+.mediacard .grow { display: flex; flex-direction: column; gap: 4px; }
 .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
 .textin { padding: 10px 12px; border-radius: var(--md-shape-md); border: 1px solid var(--md-sys-color-outline); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-size: 15px; min-width: 140px; }
 .grow { flex: 1; min-width: 0; }

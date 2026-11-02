@@ -4,15 +4,23 @@
 //  - 全屏：必须留在播放器 .stage 里面（全屏时只显示 .stage 里的东西），深色半透明，悬浮在画面右边
 import { playerPrefs, resetPlayerPrefs, type PlayerPrefs } from '../../composables/playerPrefs'
 import type { SuperResolutionMode } from '../../composables/useSuperResolution'
+import type { SubtitleOption } from '../../composables/useSubtitles'
 import { toast } from '../../composables/snackbar'
 import Switch from '../m3/Switch.vue'
 import IconButton from '../m3/IconButton.vue'
 
-defineProps<{ floating?: boolean; srMode: SuperResolutionMode }>()
+defineProps<{
+  floating?: boolean
+  srMode: SuperResolutionMode
+  subtitles?: SubtitleOption[]
+  subtitleIndex?: number
+}>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'pip'): void
   (e: 'update:srMode', mode: SuperResolutionMode): void
+  (e: 'update:subtitleIndex', index: number): void
+  (e: 'reset:subtitle'): void
 }>()
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3]
@@ -31,6 +39,7 @@ const canPip = typeof document !== 'undefined' && 'pictureInPictureEnabled' in d
 function reset() {
   resetPlayerPrefs()
   emit('update:srMode', 'off')
+  emit('reset:subtitle')
   toast('已恢复默认设置')
 }
 </script>
@@ -87,6 +96,29 @@ function reset() {
             >{{ s.label }}</button>
           </div>
           <div class="srhint t-body-s">只记住这部片子的选择。低清番剧效果更明显；卡顿就换效率或关闭。</div>
+        </div>
+
+        <div v-if="subtitles?.length" class="group">
+          <div class="glabel t-label-l">字幕</div>
+          <div class="chips">
+            <button
+              v-ripple
+              class="chip t-label-l"
+              :class="{ on: subtitleIndex === -1 }"
+              type="button"
+              @click="emit('update:subtitleIndex', -1)"
+            >关闭</button>
+            <button
+              v-for="s in subtitles"
+              :key="s.index"
+              v-ripple
+              class="chip t-label-l"
+              :class="{ on: subtitleIndex === s.index }"
+              type="button"
+              @click="emit('update:subtitleIndex', s.index)"
+            >{{ s.label }}</button>
+          </div>
+          <div class="srhint t-body-s">只记住这部片子的选择。</div>
         </div>
 
         <div class="group">

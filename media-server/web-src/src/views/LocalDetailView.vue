@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { coverURL, epLabel, fetchItem, fmtSize, peekItem, streamURL, type LocalItem } from '../api/local'
+import { coverURL, epLabel, fetchItem, fmtSize, peekItem, progKey, streamURL, type LocalItem } from '../api/local'
 import { getProg, isWatched, setProg } from '../composables/progress'
 import {
   cacheState,
@@ -27,7 +27,7 @@ import BottomSheet from '../components/m3/BottomSheet.vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import LocalEpisodes from '../components/LocalEpisodes.vue'
 
-// 本地片库的详情 + 播放：上面播放器，下面选集；进度按文件路径记（与旧前端共用同一份）
+// 本地片库的详情 + 播放：上面播放器，下面选集；进度按 progKey 记（转码后仍沿用原片进度）
 // 也服务"我的缓存"里点进来的条目：id 带 cache: 前缀时走桥取数据、用本地地址播放（离线也能看）
 // 选集区（每集缓存状态、缓存/删除多选）在 LocalEpisodes 组件里；这里只管播放和"当前这一集"的操作条
 const route = useRoute()
@@ -67,13 +67,14 @@ function pickInitial(it: LocalItem) {
   let pick = -1
   let latest = 0
   eps.forEach((e, i) => {
-    const p = getProg(e.path)
-    if (p && p.pos > 5 && !isWatched(e.path) && p.ts >= latest) {
+    const key = progKey(e)
+    const p = getProg(key)
+    if (p && p.pos > 5 && !isWatched(key) && p.ts >= latest) {
       latest = p.ts
       pick = i
     }
   })
-  if (pick < 0) pick = Math.max(0, eps.findIndex((e) => !isWatched(e.path)))
+  if (pick < 0) pick = Math.max(0, eps.findIndex((e) => !isWatched(progKey(e))))
   if (eps.length) play(pick)
 }
 
@@ -106,12 +107,16 @@ const cover = computed(() => (item.value?.cover ? coverURL(item.value.cover) : '
 function play(i: number) {
   const ep = item.value?.episodes[i]
   if (!ep) return
-  const p = playerPrefs.resume ? getProg(ep.path) : null
-  startAt.value = p && !isWatched(ep.path) ? p.pos : 0
+  const key = progKey(ep)
+  const p = playerPrefs.resume ? getProg(key) : null
+  startAt.value = p && !isWatched(key) ? p.pos : 0
   cur.value = i
 }
 
 const ep = computed(() => (item.value && cur.value >= 0 ? item.value.episodes[cur.value] : undefined))
+const allowSubtitles = !isCacheItem && !isOffline()
+const episodeSubtitles = computed(() => allowSubtitles ? ep.value?.subtitles ?? [] : [])
+const episodeAudioLang = computed(() => allowSubtitles ? ep.value?.audioLang : undefined)
 const hasNext = computed(() => !!item.value && cur.value + 1 < item.value.episodes.length)
 const hasPrev = computed(() => cur.value > 0)
 
@@ -131,14 +136,14 @@ const epSrc = computed(() => {
 
 function onProgress(pos: number, dur: number) {
   if (!ep.value || !playerPrefs.resume) return
-  setProg(ep.value.path, pos, dur)
+  setProg(progKey(ep.value), pos, dur)
   tick.value++
 }
 
 function onEnded(pos: number, dur: number) {
   // 看完记满进度（选集上打勾用），再决定要不要连播
   if (ep.value && playerPrefs.resume && dur) {
-    setProg(ep.value.path, dur, dur)
+    setProg(progKey(ep.value), dur, dur)
     tick.value++
   }
   if (playerPrefs.auto) next()
@@ -260,6 +265,8 @@ const playerTitle = computed(() =>
               :src="epSrc"
               kind="mp4"
               :series-key="`local:${id}`"
+              :subtitles="episodeSubtitles"
+              :audio-lang="episodeAudioLang"
               :cover="cover"
               :hero-key="`local:${route.params.id}`"
               idle-hint=""
