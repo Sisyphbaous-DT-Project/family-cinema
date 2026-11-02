@@ -7,15 +7,19 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	animeapi "media-server/internal/anime/api"
 	animerules "media-server/internal/anime/rules"
+	animesync "media-server/internal/anime/rulesync"
 )
 
-// 编译进二进制的默认规则；运行时优先读磁盘上的 rules/ 目录（改规则只推文件，不用重编译）
+// 编译进二进制的默认规则；运行时优先读磁盘上的 rules/ 目录。
+// 盒子每天会自动从社区规则仓库同步到这个目录（见 internal/anime/rulesync），不用重编译。
 //
 //go:embed rules/*.json
 var animeRulesFS embed.FS
@@ -56,6 +60,12 @@ func mountAnime(mux *http.ServeMux) {
 		embedded = nil
 	}
 	set := animerules.Load(rulesDir, embedded)
+	var sources []animesync.Source
+	for _, base := range ac.RuleSources {
+		if u, err := url.Parse(base); err == nil && u.Host != "" {
+			sources = append(sources, animesync.Source{Name: u.Host, Base: strings.TrimSuffix(base, "/") + "/"})
+		}
+	}
 
 	a := animeapi.New(animeapi.Deps{
 		HTTP:       base,
@@ -63,13 +73,16 @@ func mountAnime(mux *http.ServeMux) {
 		LookupIP: func(ctx context.Context, host string) ([]net.IP, error) {
 			return customDNS.LookupIP(ctx, "ip4", host)
 		},
-		Rules:      set,
-		CacheDir:   cacheDir,
-		ImgCacheMB: ac.ImgCacheMB,
-		BangumiUA:  ac.BangumiUA,
+		Rules:       set,
+		CacheDir:    cacheDir,
+		ImgCacheMB:  ac.ImgCacheMB,
+		BangumiUA:   ac.BangumiUA,
+		RuleSync:    ac.RuleSync,
+		RulesDir:    rulesDir,
+		RuleSources: sources,
 	})
 	a.Register(mux)
-	a.Start(context.Background()) // 番剧播出时间、追番查更新
+	a.Start(context.Background()) // 番剧播出时间、追番查更新、每天同步规则
 	initAnimeDownload(mux, a)     // 番剧"下载到盒子"
 	log.Printf("番剧聚合已启用: 规则 %d 条, 缓存目录 %s", len(set.All()), cacheDir)
 }

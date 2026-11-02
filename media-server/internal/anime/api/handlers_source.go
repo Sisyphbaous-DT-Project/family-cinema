@@ -30,7 +30,7 @@ func (a *API) handleSourceSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"items": []engine.Item{}})
 		return
 	}
-	key := rule.Name + "|" + q
+	key := ruleKey(rule) + "|" + q
 	if items, ok := a.searchCache.get(key); ok {
 		writeJSON(w, map[string]any{"items": items})
 		return
@@ -62,7 +62,7 @@ func (a *API) handleSourceChapters(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "缺少 src")
 		return
 	}
-	key := rule.Name + "|" + src
+	key := ruleKey(rule) + "|" + src
 	if roads, ok := a.chaptersCache.get(key); ok {
 		writeJSON(w, map[string]any{"roads": roads})
 		return

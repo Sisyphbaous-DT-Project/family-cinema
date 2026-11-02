@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"media-server/internal/anime/rules"
@@ -21,6 +23,11 @@ const maxPageBytes = 4 << 20
 // Engine 抓取页面并按规则解析。HTTP 由外部注入（盒子上需要自定义 DNS 的那个 client）。
 type Engine struct {
 	HTTP *http.Client
+	// BlockPrivate 为 true 时不访问本机/内网地址：规则每天从第三方镜像自动更新，
+	// 万一被人改坏，也不能拿盒子去请求家里的路由器等设备。跳转要靠 HTTP 的 CheckRedirect 同样把关。
+	BlockPrivate bool
+	LookupIP     func(ctx context.Context, host string) ([]net.IP, error)
+	okHosts      sync.Map // 查过是公网的域名 → 过期时间
 }
 
 // Page 一次页面抓取的结果
@@ -34,6 +41,9 @@ type Page struct {
 func (e *Engine) Fetch(ctx context.Context, r *rules.Rule, method, target string, body io.Reader, referer string) (*Page, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
+		return nil, err
+	}
+	if err := e.guard(ctx, req.URL); err != nil {
 		return nil, err
 	}
 	ua := r.UserAgent

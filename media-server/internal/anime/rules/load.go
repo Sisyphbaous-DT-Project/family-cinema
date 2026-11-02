@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
-// Set 已加载的规则集合（只读，加载后不再变动）
+// Set 已加载的规则集合。每日同步（rulesync）会用 Replace 整份换上新规则，所以读写都加锁；
+// 换的是一份新列表，旧列表和旧的 *Rule 都不会被改动，正在用旧规则的请求照常跑完。
 type Set struct {
+	mu     sync.RWMutex
 	list   []*Rule
 	byName map[string]*Rule
 }
@@ -27,15 +30,15 @@ func Load(dir string, embedded fs.FS) *Set {
 	if fsys == nil && embedded != nil {
 		fsys = embedded
 	}
-	s := &Set{byName: map[string]*Rule{}}
 	if fsys == nil {
-		return s
+		return NewSet(nil)
 	}
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		log.Printf("anime: 读取规则目录失败: %v", err)
-		return s
+		return NewSet(nil)
 	}
+	var list []*Rule
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".json") || name == "index.json" {
@@ -50,17 +53,9 @@ func Load(dir string, embedded fs.FS) *Set {
 			log.Printf("anime: 规则 %s 解析失败: %v", filepath.Base(name), err)
 			continue
 		}
-		key := strings.ToLower(r.Name)
-		if _, dup := s.byName[key]; dup {
-			continue
-		}
-		s.byName[key] = r
-		s.list = append(s.list, r)
+		list = append(list, r)
 	}
-	sort.Slice(s.list, func(i, j int) bool {
-		return strings.ToLower(s.list[i].Name) < strings.ToLower(s.list[j].Name)
-	})
-	return s
+	return NewSet(list)
 }
 
 func hasJSON(fsys fs.FS) bool {
@@ -76,16 +71,52 @@ func hasJSON(fsys fs.FS) bool {
 	return false
 }
 
-// All 按名称排序的全部规则
-func (s *Set) All() []*Rule { return s.list }
+// NewSet 用一组规则建集合（同名不区分大小写，只留先出现的那条）
+func NewSet(list []*Rule) *Set {
+	s := &Set{}
+	s.Replace(list)
+	return s
+}
+
+// Replace 整份换上新规则；排序、去重规则与 Load 一致
+func (s *Set) Replace(list []*Rule) {
+	byName := make(map[string]*Rule, len(list))
+	out := make([]*Rule, 0, len(list))
+	for _, r := range list {
+		key := strings.ToLower(r.Name)
+		if _, dup := byName[key]; dup {
+			continue
+		}
+		byName[key] = r
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	s.mu.Lock()
+	s.list, s.byName = out, byName
+	s.mu.Unlock()
+}
+
+// All 按名称排序的全部规则（返回的切片不会再被改动，可以放心遍历）
+func (s *Set) All() []*Rule {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.list
+}
 
 // Get 按名称（不区分大小写）取规则
-func (s *Set) Get(name string) *Rule { return s.byName[strings.ToLower(name)] }
+func (s *Set) Get(name string) *Rule {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.byName[strings.ToLower(name)]
+}
 
 // Infos 规则摘要列表（给前端）
 func (s *Set) Infos() []Info {
-	out := make([]Info, 0, len(s.list))
-	for _, r := range s.list {
+	list := s.All()
+	out := make([]Info, 0, len(list))
+	for _, r := range list {
 		out = append(out, r.Info())
 	}
 	return out

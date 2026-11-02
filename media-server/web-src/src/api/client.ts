@@ -1,5 +1,5 @@
 import type {
-  BgmEpisode, CalendarDay, ResolveResult, Road, RuleInfo, SearchResult, SourceItem, Subject,
+  BgmEpisode, CalendarDay, ResolveResult, Road, RuleInfo, RuleSyncStatus, SearchResult, SourceItem, Subject,
 } from './types'
 import { bangumi } from './bangumi'
 import { isOffline } from '../composables/cache'
@@ -47,6 +47,9 @@ export const api = {
   episodes: (id: number, signal?: AbortSignal): Promise<BgmEpisode[]> => bangumi.episodes(id, signal),
   // 以下是国内视频站的事，留在盒子上（盒子直连没问题）
   rules: () => get<RuleInfo[]>('/rules'),
+  ruleSync: () => get<RuleSyncStatus>('/rules/sync'),
+  // 马上检查一次规则更新，跑完才返回；这一轮没成功会按 error 抛出来
+  ruleSyncNow: () => post<RuleSyncStatus>('/rules/sync', {}),
   sourceSearch: (rule: string, kw: string, signal?: AbortSignal) =>
     get<{ items: SourceItem[]; error?: string }>(`/source/search?rule=${q(rule)}&q=${q(kw)}`, signal),
   sourceChapters: (rule: string, src: string, signal?: AbortSignal) =>

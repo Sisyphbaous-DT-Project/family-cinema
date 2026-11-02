@@ -84,7 +84,7 @@ func (r *Resolver) ResolveTarget(ctx context.Context, rule *rules.Rule, epURL, r
 }
 
 func (r *Resolver) resolve(ctx context.Context, rule *rules.Rule, epURL, referer string) (cached, error) {
-	key := rule.Name + "|" + epURL
+	key := rule.Name + "@" + string(rule.Version) + "|" + epURL // 带版本：规则升级后不用旧版解析的结果
 	r.mu.Lock()
 	if c, ok := r.cache[key]; ok && time.Now().Before(c.exp) {
 		r.mu.Unlock()

@@ -29,6 +29,8 @@
     "rulesDir": "",
     "cacheDir": "",
     "imgCacheMB": 300,
-    "bangumiUA": ""
+    "bangumiUA": "",
+    "ruleSync": true,
+    "ruleSources": []
   }
 }

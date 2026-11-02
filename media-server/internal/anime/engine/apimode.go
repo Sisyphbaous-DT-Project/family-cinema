@@ -196,6 +196,9 @@ func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIReques
 	if err != nil {
 		return nil, err
 	}
+	if err := e.guard(ctx, req.URL); err != nil {
+		return nil, err
+	}
 	ua := r.UserAgent
 	if ua == "" {
 		ua = DefaultUA

@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""从 KazumiRules 仓库同步规则到 media-server/rules/。
+"""从 KazumiRules 仓库同步规则到 media-server/rules/（编译进二进制的那份默认规则）。
 
 在开发机运行，下载 index.json 以及其中列出的每条规则 JSON。
-需要代理时设置 HTTPS_PROXY 环境变量。盒子不联网拉规则，部署时用 adb push 整个 rules/ 目录。
+需要代理时设置 HTTPS_PROXY 环境变量。服务运行时会每天自己从规则仓库镜像同步规则到
+rules/ 目录（见 internal/anime/rulesync，配置项 anime.ruleSync），一般不用再手动跑这个
+脚本；它只用来更新内嵌的兜底规则。
+
+注意：上游某条规则改成了引擎还不支持的写法（比如要验证码）时，跑这个脚本会把它
+直接写进内嵌规则；服务端的自动同步也一样跟着上游走，显示为不可用。
 
 用法：python tools/sync_rules.py
 """
@@ -57,7 +62,7 @@ def main():
 
     open(os.path.join(OUT, "index.json"), "wb").write(index_raw)
     open(os.path.join(OUT, "LICENSE"), "wb").write(get("LICENSE"))
-    with open(os.path.join(OUT, "SOURCE.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(OUT, "SOURCE.txt"), "w", encoding="utf-8", newline="\n") as f:
         f.write("规则来自 https://github.com/Predidit/KazumiRules （MIT），由 tools/sync_rules.py 同步。\n")
 
     print("total=%d changed=%d same=%d failed=%d" % (len(names), len(changed), len(same), len(failed)))

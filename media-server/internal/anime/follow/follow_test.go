@@ -204,3 +204,46 @@ func TestSeasonMatch(t *testing.T) {
 		t.Fatal("只有第一季时不该选")
 	}
 }
+
+// 用户手动选的片源站被下架了（规则每天自动更新）：要清掉、自动换到别的站，并且不能把换站当成出了新集
+func TestSourceGoneRepicks(t *testing.T) {
+	fk := &fake{
+		now:      time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC),
+		chapters: map[string]int{"A|/a": 3, "B|/b": 5},
+		items:    map[string][]engine.Item{"B": {{Name: "孤独摇滚", Src: "/b"}}},
+	}
+	usable := []string{"A", "B"}
+	s := New(Deps{
+		File:  filepath.Join(t.TempDir(), "follows.json"),
+		Rules: func() []string { return usable },
+		Search: func(ctx context.Context, rule, q string) ([]engine.Item, error) {
+			return fk.items[rule], nil
+		},
+		Chapters: func(ctx context.Context, rule, src string) ([]engine.Road, error) {
+			n, ok := fk.chapters[rule+"|"+src]
+			if !ok {
+				return nil, errors.New("站点挂了")
+			}
+			return roadsOf(n), nil
+		},
+		Air: func(id int) (airtime.Entry, bool) { return airtime.Entry{}, false },
+		Now: func() time.Time { return fk.now },
+	})
+	s.Add(Follow{ID: 9, Title: "孤独摇滚", Rule: "A", Src: "/a", SrcName: "A"})
+	runOnce(s)
+	if f, _ := s.Get(9); f.Rule != "A" || f.Count != 3 {
+		t.Fatalf("起点没记对: %+v", f)
+	}
+
+	usable = []string{"B"} // A 站被下架
+	f, _ := s.Get(9)
+	fk.now = f.NextCheck
+	runOnce(s)
+	f, _ = s.Get(9)
+	if f.Rule != "B" || f.Src != "/b" || f.PickedBy != "auto" || !f.Baseline || f.Count != 5 {
+		t.Fatalf("应该自动换到 B 站并按新站记起点: %+v", f)
+	}
+	if latest, evs, _ := s.Events(0); latest != 0 || len(evs) != 0 {
+		t.Fatalf("换站不该发更新消息: %d %+v", latest, evs)
+	}
+}

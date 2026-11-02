@@ -25,6 +25,8 @@
 
 `rulesDir` 和 `cacheDir` 留空时，番剧模块使用可执行文件旁的 `rules/` 和 `anime-cache/`；规则已内嵌在二进制中。
 
+`anime.ruleSync` 默认开启：服务启动 2 分钟后、之后每天北京时间凌晨 4 点多，从 KazumiRules 的镜像（默认 gh-proxy.org 与 GitCode，可用 `anime.ruleSources` 换成自己的地址，以 `/` 结尾）检查规则，有新版就换上、上游新增的站自动加上、所有镜像都不再列出的站自动下架，并把整套规则写进规则目录，不用重启。规则目录里有规则时只读目录、不再用内嵌的那份；想退回内嵌规则，关掉 `ruleSync` 并删掉规则目录后重启。设置页「播放源」里能看到上次检查结果，也能手动立即检查（接口 `GET/POST /api/anime/rules/sync`）。
+
 服务控制脚本只负责进程，不通过 `MEDIA_MOVIE_ROOT` 等环境变量配置媒体库；实际目录与端口以 `config.json` 或程序默认值为准。
 
 ## 部署到参考安卓盒子

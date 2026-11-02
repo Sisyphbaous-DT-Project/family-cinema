@@ -5,11 +5,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"media-server/internal/anime/rules"
 )
 
 // 运行中的任务点"重试"：失败的集应该接回这个任务的队列，失败记录清掉
 func TestAnimeRetryAppendsToRunningTask(t *testing.T) {
-	task := newAnimeDLTask("aafun", "https://example.com/anime/1.html", "测试番", "series", t.TempDir(), []animeDLEpisode{
+	task := newAnimeDLTask(&rules.Rule{Name: "aafun"}, "https://example.com/anime/1.html", "测试番", "series", t.TempDir(), []animeDLEpisode{
 		{Label: "第01集", File: "第01集.mp4", URL: "https://example.com/1-1.html"},
 		{Label: "第02集", File: "第02集.mp4", URL: "https://example.com/1-2.html"},
 	})
@@ -53,7 +55,7 @@ func TestAnimeRetryAppendsToRunningTask(t *testing.T) {
 
 // 连点"重试"或失败列表里有重复项时，同一集不能被排第二遍
 func TestAnimeRetryDoesNotDuplicateEpisode(t *testing.T) {
-	task := newAnimeDLTask("aafun", "https://example.com/anime/1.html", "测试番", "series", t.TempDir(), []animeDLEpisode{
+	task := newAnimeDLTask(&rules.Rule{Name: "aafun"}, "https://example.com/anime/1.html", "测试番", "series", t.TempDir(), []animeDLEpisode{
 		{Label: "第01集", File: "第01集.mp4", URL: "https://example.com/1-1.html"},
 		{Label: "第02集", File: "第02集.mp4", URL: "https://example.com/1-2.html"},
 	})

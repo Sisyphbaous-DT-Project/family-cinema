@@ -60,7 +60,12 @@ type Rule struct {
 	SearchAPI       APISearch   `json:"searchApiConfig"`
 	ChapterAPI      APIChapter  `json:"chapterApiConfig"`
 	AntiCrawler     AntiCrawler `json:"antiCrawlerConfig"`
+
+	raw []byte // 规则原文：每日同步落盘时原样写出，不经结构体转一道（结构体没收全所有字段）
 }
+
+// Raw 规则的原始 JSON
+func (r *Rule) Raw() []byte { return r.raw }
 
 // SearchByAPI / ChaptersByAPI 搜索、选集是否走接口模式（其它值都按 xpath）
 func (r *Rule) SearchByAPI() bool   { return r.SearchMode == ModeAPI }
@@ -116,6 +121,7 @@ func ParseRule(data []byte) (*Rule, error) {
 	if r.Name == "" {
 		return nil, errNoName
 	}
+	r.raw = append([]byte(nil), data...)
 	return &r, nil
 }
 

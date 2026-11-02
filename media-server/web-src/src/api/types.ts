@@ -61,6 +61,28 @@ export interface RuleInfo {
   adBlocker: boolean
 }
 
+// 规则每日自动更新的情况（/api/anime/rules/sync）
+export interface RuleChange {
+  name: string
+  from?: string
+  to?: string
+}
+
+export interface RuleSyncStatus {
+  enabled: boolean
+  running: boolean
+  lastCheck?: string
+  lastOk: boolean
+  error?: string
+  note?: string
+  sources?: { name: string; ok: boolean; count?: number; error?: string }[]
+  skipped?: { name: string; version: string; reason: string }[]
+  lastChanged?: string
+  updated?: RuleChange[]
+  added?: RuleChange[]
+  removed?: RuleChange[]
+}
+
 export interface SourceItem {
   name: string
   src: string

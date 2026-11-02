@@ -16,6 +16,7 @@ import (
 // checkResult 查一次的结果
 type checkResult struct {
 	discovered bool // 这次是盒子自己找的片源
+	sourceGone bool // 原来的片源站规则被下架了或变得不能用：清掉片源，下一轮自动挑
 	rule, src  string
 	srcName    string
 	count      int
@@ -29,6 +30,11 @@ func (s *Service) check(ctx context.Context, f Follow) checkResult {
 		return s.discover(ctx, f)
 	}
 	r := checkResult{rule: f.Rule, src: f.Src}
+	if !s.ruleUsable(f.Rule) {
+		// 只报"站没了"，片源由 apply 在原件上清掉：在副本上挑好新站写回去，会被当成用户中途换过源而丢掉
+		r.sourceGone = true
+		return r
+	}
 	roads, err := s.d.Chapters(ctx, f.Rule, f.Src)
 	if err != nil {
 		r.err = err.Error()
@@ -38,6 +44,16 @@ func (s *Service) check(ctx context.Context, f Follow) checkResult {
 		r.err = "片源站上这部番一集都没有"
 	}
 	return r
+}
+
+// ruleUsable 这个片源规则现在还在、还能用（规则每天自动更新，站可能被下架）
+func (s *Service) ruleUsable(rule string) bool {
+	for _, n := range s.d.Rules() {
+		if strings.EqualFold(n, rule) {
+			return true
+		}
+	}
+	return false
 }
 
 // discover 没指定片源时盒子自己挑：各站搜一遍，名字对得上的里面挑集数最多的（最新的）

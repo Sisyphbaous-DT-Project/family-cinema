@@ -297,6 +297,15 @@ func (s *Service) apply(id int, r checkResult) {
 	} else if f.Rule != r.rule || f.Src != r.src {
 		return
 	}
+	if r.sourceGone {
+		// 不管是谁选的站，站都没了，清掉让下一轮自动挑；集数起点也要按新站重新记，不能把换站当成出了新集
+		log.Printf("追番 %s 的片源 %s 已经不能用了，换一个站", f.Title, f.SrcName)
+		f.Rule, f.Src, f.SrcName, f.PickedBy = "", "", "", ""
+		f.Baseline, f.Count, f.CheckErr, f.Fails = false, 0, "", 0
+		f.NextCheck = time.Time{}
+		s.save()
+		return
+	}
 	f.CheckedAt = now
 	if r.err != "" {
 		f.CheckErr = r.err

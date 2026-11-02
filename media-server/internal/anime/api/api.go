@@ -20,6 +20,7 @@ import (
 	"media-server/internal/anime/hls"
 	"media-server/internal/anime/resolve"
 	"media-server/internal/anime/rules"
+	"media-server/internal/anime/rulesync"
 	"media-server/internal/anime/sniff"
 )
 
@@ -32,6 +33,14 @@ type Deps struct {
 	CacheDir   string // 元数据与图片缓存根目录
 	ImgCacheMB int
 	BangumiUA  string
+
+	// 规则每日自动更新：RulesDir 是规则落盘目录（和启动时读的同一个），RuleSources 为空用默认镜像
+	RuleSync    bool
+	RulesDir    string
+	RuleSources []rulesync.Source
+
+	// AllowPrivate 只给测试用：放行本机/内网地址（本地模拟站点都在 127.0.0.1）
+	AllowPrivate bool
 }
 
 // API 番剧聚合接口
@@ -45,6 +54,7 @@ type API struct {
 	resolver *resolve.Resolver
 	air      *airtime.DB
 	follow   *follow.Service
+	ruleSync *rulesync.Syncer // 没开自动更新时为 nil
 
 	searchCache   *ttlCache[[]engine.Item]
 	chaptersCache *ttlCache[[]engine.Road]
@@ -61,8 +71,10 @@ func New(d Deps) *API {
 	// 抓视频站用的 client 带 cookie 罐：站点发的通行证（如 moonci 的 403 刷新页）记住后续请求自动带上，
 	// 和 Kazumi 按插件保存 cookie 是同一个意思。cookie 按域名隔离，不会串站。
 	jar, _ := cookiejar.New(nil)
-	eng := &engine.Engine{HTTP: &http.Client{Timeout: d.HTTP.Timeout, Transport: d.HTTP.Transport, Jar: jar}}
-	proxy := &hls.Proxy{HTTP: d.StreamHTTP, Signer: hls.NewSigner(), LookupIP: d.LookupIP}
+	// 规则每天从第三方镜像自动更新，网址由规则决定：抓页面同样挡掉本机/内网地址（跳转过去的也挡）
+	eng := &engine.Engine{BlockPrivate: !d.AllowPrivate, LookupIP: d.LookupIP}
+	eng.HTTP = &http.Client{Timeout: d.HTTP.Timeout, Transport: d.HTTP.Transport, Jar: jar, CheckRedirect: eng.CheckRedirect}
+	proxy := &hls.Proxy{HTTP: d.StreamHTTP, Signer: hls.NewSigner(), LookupIP: d.LookupIP, AllowPrivate: d.AllowPrivate}
 	hub := sniff.NewHub()
 	maxMB := d.ImgCacheMB
 	if maxMB <= 0 {
@@ -110,20 +122,35 @@ func New(d Deps) *API {
 			}
 			roads, err := a.engine.Chapters(ctx, r, src)
 			if err == nil {
-				a.chaptersCache.set(r.Name+"|"+src, roads)
+				a.chaptersCache.set(ruleKey(r)+"|"+src, roads)
 			}
 			return roads, err
 		},
 		Air: a.air.Get,
 	})
+	if d.RuleSync && d.RulesDir != "" {
+		a.ruleSync = rulesync.New(rulesync.Options{
+			HTTP:      d.HTTP,
+			Rules:     d.Rules,
+			Dir:       d.RulesDir,
+			StateFile: filepath.Join(d.CacheDir, "rulesync.json"),
+			Sources:   d.RuleSources,
+		})
+	}
 	return a
 }
 
-// Start 启动后台任务：每天更新番剧播出时间、按时去片源站查追番更新
+// Start 启动后台任务：每天更新番剧播出时间、按时去片源站查追番更新、每天同步规则
 func (a *API) Start(ctx context.Context) {
 	go a.air.Run(ctx)
 	go a.follow.Run(ctx)
+	if a.ruleSync != nil {
+		go a.ruleSync.Run(ctx)
+	}
 }
+
+// ruleKey 缓存键里的规则部分带上版本：规则升级后不再用旧版解析出来的结果
+func ruleKey(r *rules.Rule) string { return r.Name + "@" + string(r.Version) }
 
 // ---- 给"下载到盒子"（main 包的 anime_download.go）用的能力 ----
 
@@ -152,6 +179,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/anime/img", a.img)
 
 	mux.HandleFunc("GET /api/anime/rules", a.handleRules)
+	mux.HandleFunc("GET /api/anime/rules/sync", a.handleRuleSyncStatus)
+	mux.HandleFunc("POST /api/anime/rules/sync", a.handleRuleSyncNow)
 	mux.HandleFunc("GET /api/anime/source/search", a.handleSourceSearch)
 	mux.HandleFunc("GET /api/anime/source/chapters", a.handleSourceChapters)
 	mux.HandleFunc("GET /api/anime/resolve", a.handleResolve)

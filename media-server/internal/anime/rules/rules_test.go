@@ -63,3 +63,24 @@ func TestLoadDiskFirstThenEmbed(t *testing.T) {
 		t.Fatal("空目录应回退到 embed")
 	}
 }
+
+// 每日同步整份换规则：拿着旧列表的人不受影响，新列表照样排序去重，原文留着可以原样落盘
+func TestSetReplace(t *testing.T) {
+	a, _ := ParseRule([]byte(`{"name":"a","version":"1"}`))
+	s := NewSet([]*Rule{a})
+	old := s.All()
+	b, _ := ParseRule([]byte(`{"name":"B","version":"2"}`))
+	b2, _ := ParseRule([]byte(`{"name":"b","version":"9"}`))
+	c, _ := ParseRule([]byte(`{"name":"C","version":"3"}`))
+	s.Replace([]*Rule{c, b, b2})
+	if len(old) != 1 || old[0] != a {
+		t.Fatal("旧列表被改动了")
+	}
+	all := s.All()
+	if len(all) != 2 || all[0] != b || all[1] != c || s.Get("A") != nil || s.Get("b") != b {
+		t.Fatalf("换完的集合不对: %+v", s.Infos())
+	}
+	if string(b.Raw()) != `{"name":"B","version":"2"}` {
+		t.Errorf("规则原文没留住: %s", b.Raw())
+	}
+}

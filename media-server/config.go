@@ -36,6 +36,9 @@ type AnimeConfig struct {
 	CacheDir   string `json:"cacheDir"`   // Bangumi 元数据与封面缓存
 	ImgCacheMB int    `json:"imgCacheMB"` // 封面缓存总量上限
 	BangumiUA  string `json:"bangumiUA"`  // 访问 Bangumi 时的 User-Agent
+	// 每天从社区规则仓库自动更新规则（写进 RulesDir）；RuleSources 是规则仓库地址（以 / 结尾），留空用内置的两个镜像
+	RuleSync    bool     `json:"ruleSync"`
+	RuleSources []string `json:"ruleSources"`
 }
 
 type ProxyConfig struct {
@@ -75,7 +78,7 @@ func defaultConfig() Config {
 		BTUploadKBs: 2048, // 2 MB/s：千兆宽带下毫无压力，换来对端不掐我们的下载
 		BTMaxConns:  80,
 		BTUPnP:      true,
-		Anime:       AnimeConfig{Enabled: true, ImgCacheMB: 300},
+		Anime:       AnimeConfig{Enabled: true, ImgCacheMB: 300, RuleSync: true},
 	}
 }
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/client'
-import type { RuleInfo } from '../api/types'
+import type { RuleChange, RuleInfo, RuleSyncStatus } from '../api/types'
 import { SEED_PRESETS, themeState, type ThemeMode } from '../theme/theme'
-import { isRuleEnabled, setRuleEnabled, settings } from '../composables/settings'
+import { isRuleEnabled, setRuleEnabled } from '../composables/settings'
 import { bcall, bjson, hasBridge } from '../composables/bridge'
 import { cacheSize } from '../composables/cache'
 import { fmtSize } from '../api/local'
@@ -32,6 +32,86 @@ const online = ref<number | null>(null)
 const worker = ref(false)
 const inApp = hasBridge()
 const REASON: Record<string, string> = { captcha: '需要验证码', 'api-mode': '暂不支持', incomplete: '规则不完整' }
+// 关掉的、而且现在还在的站（上游下架的站名可能还留在关闭名单里，不算；以后重新上架还记得是关着的）
+const disabledCount = computed(() => rules.value.filter((r) => !isRuleEnabled(r.name)).length)
+
+// ---- 播放源规则每天自动更新 ----
+const ruleSync = ref<RuleSyncStatus | null>(null)
+const ruleChecking = ref(false)
+
+function whenText(iso?: string): string {
+  const d = iso ? new Date(iso) : null
+  if (!d || isNaN(d.getTime())) return ''
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const ago = Math.round((day(new Date()) - day(d)) / 86400000)
+  if (ago === 0) return `今天 ${hm}`
+  if (ago === 1) return `昨天 ${hm}`
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`
+}
+
+function changeText(st: RuleSyncStatus): string {
+  const names = (cs?: RuleChange[]) => (cs ?? []).map((c) => c.name).join('、')
+  const parts: string[] = []
+  if (st.updated?.length) parts.push('更新了 ' + names(st.updated))
+  if (st.added?.length) parts.push('新增 ' + names(st.added))
+  if (st.removed?.length) parts.push('下架 ' + names(st.removed))
+  return parts.join('，')
+}
+
+const ruleSyncLines = computed<string[]>(() => {
+  const st = ruleSync.value
+  if (!st) return []
+  if (!st.enabled) return ['盒子的配置里关掉了']
+  if (ruleChecking.value || st.running) return ['正在检查…']
+  if (!st.lastCheck) return ['盒子开机两分钟后会自动检查一次，之后每天凌晨检查']
+  const lines = [`上次检查：${whenText(st.lastCheck)}，` + (st.lastOk ? '没问题' : `没成功（${st.error ?? '原因不明'}）`)]
+  if (st.lastChanged) lines.push(`最近一次变化：${whenText(st.lastChanged)} ${changeText(st)}`)
+  if (st.skipped?.length) lines.push(`有 ${st.skipped.length} 条规则上游出了新版，这次没换成：${st.skipped.map((s) => s.name).join('、')}`)
+  if (st.note) lines.push(st.note)
+  return lines
+})
+
+async function checkRules() {
+  if (ruleChecking.value) return
+  ruleChecking.value = true
+  try {
+    const st = await api.ruleSyncNow()
+    ruleSync.value = st
+    toast(st.lastChanged && st.lastChanged === st.lastCheck ? '规则更新好了：' + changeText(st) : '规则都是最新的')
+  } catch (e) {
+    toast('没检查成功：' + (e instanceof Error ? e.message : '原因不明'))
+    ruleSync.value = await api.ruleSync().catch(() => ruleSync.value)
+  } finally {
+    ruleChecking.value = false
+  }
+  await reloadRules()
+}
+
+async function reloadRules() {
+  try {
+    rules.value = await api.rules()
+  } catch {
+    /* 规则列表拿不到就保持原样 */
+  }
+}
+
+// 打开页面时盒子正好在检查（开机后或凌晨那一轮）：每 2 秒问一次，查完恢复按钮、重新拉规则列表
+let ruleSyncTimer: ReturnType<typeof setTimeout> | undefined
+let alive = true
+function showRuleSync(st: RuleSyncStatus) {
+  if (!alive) return
+  const wasRunning = ruleSync.value?.running
+  ruleSync.value = st
+  clearTimeout(ruleSyncTimer)
+  if (st.running) ruleSyncTimer = setTimeout(pollRuleSync, 2000)
+  else if (wasRunning) reloadRules()
+}
+function pollRuleSync() {
+  api.ruleSync().then(showRuleSync, () => {
+    if (alive) ruleSyncTimer = setTimeout(pollRuleSync, 2000)
+  })
+}
 
 // ---- Bangumi 网络（仅 App 内可见；浏览器靠系统代理，无需设置） ----
 const bgmAuto = ref(true)
@@ -113,6 +193,12 @@ onMounted(async () => {
   } catch {
     /* 规则列表拿不到就显示空 */
   }
+  api.ruleSync().then(
+    (st) => showRuleSync(st),
+    () => {
+      /* 旧盒子没有这个接口，就不显示自动更新那一行 */
+    },
+  )
   if (inApp) {
     try {
       const p = JSON.parse(bcall((b) => b.getBgmProxy?.()) ?? '{}') as { auto?: boolean; addr?: string }
@@ -130,7 +216,11 @@ onMounted(async () => {
   refreshWorker()
 })
 
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisible))
+onBeforeUnmount(() => {
+  document.removeEventListener('visibilitychange', onVisible)
+  alive = false
+  clearTimeout(ruleSyncTimer)
+})
 
 function saveBgmProxy() {
   bcall((b) => b.setBgmProxy?.(bgmAuto.value, bgmAddr.value.trim()))
@@ -381,8 +471,26 @@ function toggleWorker(on: boolean) {
             />
           </div>
           <div v-if="!rules.length" class="row muted">没有加载到播放源规则</div>
+          <div v-if="ruleSync" class="row">
+            <div class="grow">
+              <div class="t-body-l">规则自动更新</div>
+              <div v-for="(line, i) in ruleSyncLines" :key="i" class="t-body-s muted">{{ line }}</div>
+            </div>
+            <button
+              v-if="ruleSync.enabled"
+              v-ripple
+              class="probebtn"
+              type="button"
+              :disabled="ruleChecking || ruleSync.running"
+              @click="checkRules"
+            >
+              {{ ruleChecking ? '检查中' : '立即检查' }}
+            </button>
+          </div>
         </div>
-        <p class="t-body-s muted note">规则来自开源社区 Kazumi Rules。已关闭 {{ settings.disabledRules.length }} 个。</p>
+        <p class="t-body-s muted note">
+          规则来自开源社区 Kazumi Rules，盒子每天自动同步。已关闭 {{ disabledCount }} 个。
+        </p>
       </section>
 
       <section>
@@ -509,6 +617,7 @@ button.row { width: 100%; }
 .textin { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: var(--md-shape-md); border: 1px solid var(--md-sys-color-outline); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-size: 15px; }
 .textin:disabled { opacity: 0.4; }
 .probebtn { padding: 9px 18px; border-radius: var(--md-shape-md); border: none; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font-size: 14px; flex-shrink: 0; }
+.probebtn:disabled { opacity: 0.6; }
 .ok { color: var(--md-sys-color-primary); }
 .warn { color: var(--md-sys-color-error, #ba1a1a); }
 </style>
