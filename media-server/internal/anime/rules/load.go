@@ -4,11 +4,16 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 )
+
+// PreviousDir 规则目录下存"每站上一份通过检查的规则"的子目录（rulesync 换新版前写进去）。
+// 只在当前文件坏掉时拿来救急，Load 不会把它当成当前规则加载。
+const PreviousDir = "previous"
 
 // Set 已加载的规则集合。每日同步（rulesync）会用 Replace 整份换上新规则，所以读写都加锁；
 // 换的是一份新列表，旧列表和旧的 *Rule 都不会被改动，正在用旧规则的请求照常跑完。
@@ -44,18 +49,37 @@ func Load(dir string, embedded fs.FS) *Set {
 		if e.IsDir() || !strings.HasSuffix(name, ".json") || name == "index.json" {
 			continue
 		}
+		var r *Rule
 		data, err := fs.ReadFile(fsys, name)
-		if err != nil {
-			continue
+		if err == nil {
+			r, err = ParseRule(data)
 		}
-		r, err := ParseRule(data)
 		if err != nil {
+			// 当前文件读不出来或坏了（比如写到一半断电）：有同站的上一版就先用上一版
+			if p := loadPrevious(fsys, name); p != nil {
+				log.Printf("anime: 规则 %s 读不出来（%v），改用上一版 %s", filepath.Base(name), err, p.Version)
+				list = append(list, p)
+				continue
+			}
 			log.Printf("anime: 规则 %s 解析失败: %v", filepath.Base(name), err)
 			continue
 		}
 		list = append(list, r)
 	}
 	return NewSet(list)
+}
+
+// loadPrevious 读 previous/ 里同一个文件名的上一版；名字得对得上，免得拿别的站顶替
+func loadPrevious(fsys fs.FS, name string) *Rule {
+	data, err := fs.ReadFile(fsys, path.Join(PreviousDir, name))
+	if err != nil {
+		return nil
+	}
+	r, err := ParseRule(data)
+	if err != nil || !strings.EqualFold(r.Name, strings.TrimSuffix(name, ".json")) {
+		return nil
+	}
+	return r
 }
 
 func hasJSON(fsys fs.FS) bool {

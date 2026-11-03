@@ -64,6 +64,37 @@ func TestLoadDiskFirstThenEmbed(t *testing.T) {
 	}
 }
 
+// 当前文件坏了（写到一半断电之类）：用 previous/ 里同站的上一版顶上；没有上一版就跳过、不崩。
+// previous/ 是子目录，里面的东西不会被当成当前规则；只有上一版、没有当前文件的站不会冒出来
+func TestLoadFallsBackToPrevious(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, data string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("A.json", `{"name":"A","version":"2.0",`) // 半截
+	write(PreviousDir+"/A.json", `{"name":"A","version":"1.0"}`)
+	write("B.json", `not json`) // 坏了也没有上一版
+	write("C.json", `{"name":"C","version":"1"}`)
+	write("D.json", ``)
+	write(PreviousDir+"/D.json", `{"name":"Other"}`) // 名字对不上，不拿来顶替
+	write(PreviousDir+"/ghost.json", `{"name":"ghost"}`)
+
+	s := Load(dir, nil)
+	if a := s.Get("A"); a == nil || a.Version != "1.0" {
+		t.Fatalf("A 应该用上一版 1.0: %+v", s.Infos())
+	}
+	if len(s.All()) != 2 || s.Get("C") == nil || s.Get("B") != nil || s.Get("Other") != nil || s.Get("ghost") != nil {
+		t.Fatalf("应只有 A、C: %+v", s.Infos())
+	}
+}
+
 // 每日同步整份换规则：拿着旧列表的人不受影响，新列表照样排序去重，原文留着可以原样落盘
 func TestSetReplace(t *testing.T) {
 	a, _ := ParseRule([]byte(`{"name":"a","version":"1"}`))

@@ -60,6 +60,31 @@ func rel(path string) string {
 	return path
 }
 
+// searchExprs / chapterExprs 规则 XPath 模式实际交给 XPath 库的表达式：先做兼容改写（compatXPath），
+// 子选择器再相对化（rel）。解析页面和更新前的检查（ValidateRule）都从这里取，两边保证一模一样。
+type searchExprs struct{ list, name, result string }
+
+func searchXPath(r *rules.Rule) searchExprs {
+	return searchExprs{
+		list:   compatXPath(r.SearchList),
+		name:   rel(compatXPath(r.SearchName)),
+		result: rel(compatXPath(r.SearchResult)),
+	}
+}
+
+type chapterExprs struct {
+	wholePage     bool // 个别旧规则把 chapterRoads 写成 "//"，含义是"整个页面就是一条线路"
+	roads, result string
+}
+
+func chapterXPath(r *rules.Rule) chapterExprs {
+	return chapterExprs{
+		wholePage: strings.Trim(strings.TrimSpace(r.ChapterRoads), "/") == "",
+		roads:     compatXPath(r.ChapterRoads),
+		result:    rel(compatXPath(r.ChapterResult)),
+	}
+}
+
 func cleanText(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
@@ -118,24 +143,47 @@ func sameSiteHTTPS(baseURL, link string) string {
 	return l.String()
 }
 
+// queryAllXPath / queryOneXPath 把 XPath 库在求值阶段的 panic 也变成规则错误。
+// 表达式编译通过后，遇到真实节点仍可能因函数参数类型不对而 panic，不能只靠更新前检查兜底。
+func queryAllXPath(top *html.Node, expr string) (nodes []*html.Node, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			nodes = nil
+			err = fmt.Errorf("XPath 求值失败: %v", p)
+		}
+	}()
+	return htmlquery.QueryAll(top, expr)
+}
+
+func queryOneXPath(top *html.Node, expr string) (node *html.Node, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			node = nil
+			err = fmt.Errorf("XPath 求值失败: %v", p)
+		}
+	}()
+	return htmlquery.Query(top, expr)
+}
+
 // ParseSearch 按规则解析搜索结果页
 func ParseSearch(r *rules.Rule, body []byte, contentType, pageURL string) ([]Item, error) {
 	doc, err := decode(body, contentType)
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := htmlquery.QueryAll(doc, r.SearchList)
+	x := searchXPath(r)
+	nodes, err := queryAllXPath(doc, x.list)
 	if err != nil {
 		return nil, fmt.Errorf("searchList 表达式无效: %w", err)
 	}
 	var items []Item
 	seen := map[string]bool{}
 	for _, n := range nodes {
-		nameNode, err := htmlquery.Query(n, rel(r.SearchName))
+		nameNode, err := queryOneXPath(n, x.name)
 		if err != nil {
 			return nil, fmt.Errorf("searchName 表达式无效: %w", err)
 		}
-		linkNode, err := htmlquery.Query(n, rel(r.SearchResult))
+		linkNode, err := queryOneXPath(n, x.result)
 		if err != nil {
 			return nil, fmt.Errorf("searchResult 表达式无效: %w", err)
 		}
@@ -159,16 +207,16 @@ func ParseChapters(r *rules.Rule, body []byte, contentType, pageURL string) ([]R
 	if err != nil {
 		return nil, err
 	}
+	x := chapterXPath(r)
 	var roadNodes []*html.Node
-	if strings.Trim(strings.TrimSpace(r.ChapterRoads), "/") == "" {
-		// 个别旧规则把 chapterRoads 写成 "//"，含义是"整个页面就是一条线路"
+	if x.wholePage {
 		roadNodes = []*html.Node{doc}
-	} else if roadNodes, err = htmlquery.QueryAll(doc, r.ChapterRoads); err != nil {
+	} else if roadNodes, err = queryAllXPath(doc, x.roads); err != nil {
 		return nil, fmt.Errorf("chapterRoads 表达式无效: %w", err)
 	}
 	var roads []Road
 	for _, rn := range roadNodes {
-		epNodes, err := htmlquery.QueryAll(rn, rel(r.ChapterResult))
+		epNodes, err := queryAllXPath(rn, x.result)
 		if err != nil {
 			return nil, fmt.Errorf("chapterResult 表达式无效: %w", err)
 		}

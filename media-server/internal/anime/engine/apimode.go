@@ -140,8 +140,19 @@ func encodeComponent(s string) string {
 	return b.String()
 }
 
-// apiCall 按请求模板调一次接口，返回解码后的 JSON（数字是 json.Number）
-func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIRequest, vars map[string]any) (any, error) {
+// apiRequest 按模板拼好、还没发出去的一次接口请求
+type apiRequest struct {
+	method      string
+	url         *url.URL
+	body        []byte // hasBody 为 false 时不带请求体
+	hasBody     bool
+	contentType string
+	headers     map[string]any // 规则自带的请求头（已渲染）
+}
+
+// buildAPIRequest 按请求模板代入变量拼出请求：方法、地址（含 query）、请求体、请求头。
+// 运行时（apiCall）和更新前的检查（ValidateRule 用样例值）共用这一份，保证两边判断一致。
+func buildAPIRequest(cfg rules.APIRequest, vars map[string]any) (*apiRequest, error) {
 	method := strings.ToUpper(strings.TrimSpace(cfg.Method))
 	if method == "" {
 		method = http.MethodGet
@@ -168,8 +179,7 @@ func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIReques
 		}
 		u.RawQuery = qs.Encode()
 	}
-	var body io.Reader
-	contentType := ""
+	p := &apiRequest{method: method, url: u}
 	if method == http.MethodPost && cfg.BodyType != "" && cfg.BodyType != "none" {
 		rb, err := renderValue(cfg.Body, vars)
 		if err != nil {
@@ -181,7 +191,7 @@ func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIReques
 			if err != nil {
 				return nil, err
 			}
-			body, contentType = bytes.NewReader(data), "application/json"
+			p.body, p.hasBody, p.contentType = data, true, "application/json"
 		case "form":
 			form := url.Values{}
 			if m, ok := rb.(map[string]any); ok {
@@ -189,10 +199,30 @@ func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIReques
 					form.Set(k, anyString(v))
 				}
 			}
-			body, contentType = strings.NewReader(form.Encode()), "application/x-www-form-urlencoded"
+			p.body, p.hasBody, p.contentType = []byte(form.Encode()), true, "application/x-www-form-urlencoded"
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if len(cfg.Headers) > 0 {
+		h, err := renderMap(cfg.Headers, vars)
+		if err != nil {
+			return nil, err
+		}
+		p.headers = h
+	}
+	return p, nil
+}
+
+// apiCall 按请求模板调一次接口，返回解码后的 JSON（数字是 json.Number）
+func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIRequest, vars map[string]any) (any, error) {
+	p, err := buildAPIRequest(cfg, vars)
+	if err != nil {
+		return nil, err
+	}
+	var body io.Reader
+	if p.hasBody {
+		body = bytes.NewReader(p.body)
+	}
+	req, err := http.NewRequestWithContext(ctx, p.method, p.url.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -208,18 +238,12 @@ func (e *Engine) apiCall(ctx context.Context, r *rules.Rule, cfg rules.APIReques
 	if ref := firstNonEmpty(r.Referer, r.BaseURL); ref != "" {
 		req.Header.Set("Referer", ref)
 	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+	if p.contentType != "" {
+		req.Header.Set("Content-Type", p.contentType)
 	}
 	// 规则自带的请求头最后设，可以覆盖上面的默认值（如 apikey、Authorization、User-Agent）
-	if len(cfg.Headers) > 0 {
-		h, err := renderMap(cfg.Headers, vars)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range h {
-			req.Header.Set(k, anyString(v))
-		}
+	for k, v := range p.headers {
+		req.Header.Set(k, anyString(v))
 	}
 	resp, err := e.HTTP.Do(req)
 	if err != nil {
@@ -261,12 +285,21 @@ func (e *Engine) searchAPI(ctx context.Context, r *rules.Rule, kw string) ([]Ite
 	return parseSearchAPI(cfg, doc)
 }
 
+// buildSourceURL 展开搜索结果的详情页模板；模板为空时，编号原样交给选集那一步。
+// 运行时和更新前检查共用，模板里写错变量会明确报错，不再原样带进后续请求。
+func buildSourceURL(tpl, src string) (string, error) {
+	tpl = strings.TrimSpace(tpl)
+	if tpl == "" {
+		return src, nil
+	}
+	return renderTemplate(tpl, map[string]any{"source": src}, true)
+}
+
 func parseSearchAPI(cfg rules.APISearch, doc any) ([]Item, error) {
 	nodes, err := jsonRead(doc, cfg.ListPath)
 	if err != nil {
 		return nil, err
 	}
-	tpl := strings.TrimSpace(cfg.SourceTemplate)
 	var items []Item
 	seen := map[string]bool{}
 	for _, n := range nodes {
@@ -282,9 +315,9 @@ func parseSearchAPI(cfg rules.APISearch, doc any) ([]Item, error) {
 		if name == "" || src == "" {
 			continue
 		}
-		// 有模板就拼成详情页地址；没有就把来源（通常是编号）原样交给选集那一步
-		if tpl != "" {
-			src = strings.ReplaceAll(tpl, "@source", encodeComponent(src))
+		src, err = buildSourceURL(cfg.SourceTemplate, src)
+		if err != nil {
+			return nil, err
 		}
 		if seen[src] {
 			continue

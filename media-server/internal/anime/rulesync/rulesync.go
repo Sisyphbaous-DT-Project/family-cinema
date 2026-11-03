@@ -4,6 +4,10 @@
 // 盒子直连 GitHub 被墙，用两个国内能连上的镜像（2026-11-02 盒子实测）：
 // gh-proxy 内容最新；GitCode 快，但会落后好几天。所以两边都问，每条规则取版本高的那份，
 // 并且永不降级——跟 Kazumi 的做法一致（它的注释原话意思：镜像可能落后）。
+//
+// 新版换上之前先在本地验收（不联网）：表达式引擎认不认得、要不要验证码、模板能不能展开。
+// 不合格的按站跳过、继续用当前那份，不影响别的站更新；合格的换上前把当前那份存进 previous/，
+// 当前文件哪天坏了，启动时还能拿上一版顶上（见 rules.Load）。
 package rulesync
 
 import (
@@ -22,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"media-server/internal/anime/engine"
 	"media-server/internal/anime/rules"
 )
 
@@ -57,6 +62,9 @@ type Options struct {
 	StateFile string // 同步状态存哪（给设置页看）
 	Sources   []Source
 	Now       func() time.Time
+	// Validate 新版换上之前的本地检查（不联网），为空用 engine.ValidateRule；
+	// 验证码、缺字段这些在它之前已经用 Rule.Unsupported 查过了
+	Validate func(*rules.Rule) error
 }
 
 // Change 一条规则的变化
@@ -69,8 +77,43 @@ type Change struct {
 // Skip 上游有新版但这次没换的规则
 type Skip struct {
 	Name    string `json:"name"`
-	Version string `json:"version"`
+	Version string `json:"version"` // 上游的版本
 	Reason  string `json:"reason"`
+	// Kind 给设置页挑说法：captcha 要验证码、invalid 引擎暂未兼容、engine 要更新盒子程序、
+	// download 没下载下来（一小时后再试）、mismatch 镜像给的文件不对。旧版本存的状态里没有这个字段
+	Kind string `json:"kind,omitempty"`
+	// CurrentVersion 还在继续用的那一版；新站没有旧版、这次也没启用时为空
+	CurrentVersion string `json:"currentVersion,omitempty"`
+}
+
+// 候选规则没换成的几类原因（Skip.Kind）
+const (
+	kindDownload = "download"
+	kindMismatch = "mismatch"
+	kindEngine   = "engine"
+	kindCaptcha  = "captcha"
+	kindInvalid  = "invalid"
+)
+
+// skipErr 一个候选为什么没用上。sure 为真表示文件确实就是清单写的那个版本、只是引擎用不了它：
+// 同一个版本等多久都一样，不用一小时后重试，也不去落后的镜像找更旧的版本顶替
+type skipErr struct {
+	kind, reason string
+	detail       string // 具体原因，只记日志
+	sure         bool
+}
+
+func (e *skipErr) Error() string { return e.reason }
+
+// rank 几个候选都没成时，挑最能说明问题的原因给人看
+func (e *skipErr) rank() int {
+	switch {
+	case e.sure:
+		return 2
+	case e.kind == kindMismatch:
+		return 1
+	}
+	return 0
 }
 
 // SourceStatus 一个镜像这一轮的情况
@@ -113,6 +156,9 @@ func New(o Options) *Syncer {
 	}
 	if len(o.Sources) == 0 {
 		o.Sources = DefaultSources
+	}
+	if o.Validate == nil {
+		o.Validate = engine.ValidateRule
 	}
 	s := &Syncer{o: o}
 	if b, err := os.ReadFile(o.StateFile); err == nil {
@@ -258,31 +304,61 @@ func (s *Syncer) runOnce(ctx context.Context) (res result) {
 		})
 		local := byKey[key]
 		var got *rules.Rule
-		var reason, best string
-		netFail := false
+		var why *skipErr
+		var best, sureVer string // sureVer：确定引擎用不了的那个版本
+		var dlFail []string      // 没下载下来的候选版本
 		for _, c := range cands {
 			if local != nil && !newer(c.version, string(local.Version)) {
 				break // 后面的只会更旧
+			}
+			if cmp, ok := compareVersion(c.version, sureVer); ok && cmp < 0 {
+				break // 新版验收没过：不去落后的镜像找更旧的版本顶替，继续用当前那份
 			}
 			if best == "" {
 				best = c.version
 			}
 			r, err := s.fetchRule(ctx, c)
-			if err != nil {
-				reason = err.Error()
-				var de downloadErr
-				netFail = netFail || errors.As(err, &de)
-				continue
+			if err == nil {
+				got = r
+				break
 			}
-			got = r
-			break
+			se, _ := err.(*skipErr)
+			if se == nil {
+				se = &skipErr{kind: kindMismatch, reason: err.Error()}
+			}
+			// 设置页说的是"上游最新的那个版本为什么没换成"：只在最新版本的几个候选里挑最说明问题的原因
+			if cmp, _ := compareVersion(c.version, best); why == nil || (cmp == 0 && se.rank() > why.rank()) {
+				why = se
+			}
+			switch {
+			case se.kind == kindDownload:
+				dlFail = append(dlFail, c.version)
+			case se.sure && sureVer == "":
+				sureVer = c.version
+			}
 		}
 		if got == nil {
 			if best != "" {
-				res.skipped = append(res.skipped, Skip{Name: cands[0].name, Version: best, Reason: reason})
+				sk := Skip{Name: cands[0].name, Version: best, Reason: why.reason, Kind: why.kind}
+				keep := "这个站先不启用"
+				if local != nil {
+					sk.CurrentVersion = string(local.Version)
+					keep = "继续使用 " + sk.CurrentVersion
+				}
+				res.skipped = append(res.skipped, sk)
+				detail := ""
+				if why.detail != "" {
+					detail = "（" + why.detail + "）"
+				}
+				log.Printf("番剧规则 %s 上游 %s 没换成：%s%s，%s", sk.Name, best, why.reason, detail, keep)
 			}
-			// 版本对不上、要更新引擎这种等多久都没用；只有网络原因没下载下来的才值得过一会儿再试
-			res.retry = res.retry || netFail
+			// 只有网络原因没下载下来、而且那个版本不是已经确定用不了的，才值得过一会儿再试；
+			// 版本对不上、表达式不认识、要验证码这些等多久都一样
+			for _, v := range dlFail {
+				if cmp, ok := compareVersion(v, sureVer); !ok || cmp > 0 {
+					res.retry = true
+				}
+			}
 			continue
 		}
 		next[key] = got
@@ -378,28 +454,43 @@ func rawVersion(b json.RawMessage) string {
 	return strings.TrimSpace(string(b))
 }
 
-// downloadErr 规则文件没下载下来（网络、镜像临时出错），过一会儿再试可能就好了
-type downloadErr struct{ error }
-
-// fetchRule 下载一条规则并核对：名字对得上、文件里的版本就是清单写的版本、引擎认得
+// fetchRule 下载一条规则并验收：名字对得上、文件里的版本就是清单写的版本、引擎等级够、
+// 不要验证码、表达式和模板本地检查通过。没通过返回 *skipErr，当前那份规则原样留着。
 func (s *Syncer) fetchRule(ctx context.Context, c cand) (*rules.Rule, error) {
 	data, err := s.get(ctx, c.src.Base+c.name+".json", maxRuleSize)
 	if err != nil {
-		return nil, downloadErr{fmt.Errorf("%s 下载失败：%v", c.src.Name, err)}
+		// 网络、镜像临时出错，过一会儿再试可能就好了
+		return nil, &skipErr{kind: kindDownload, reason: fmt.Sprintf("%s 下载失败：%v", c.src.Name, err)}
 	}
 	r, err := rules.ParseRule(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s 给的规则读不懂", c.src.Name)
+		return nil, &skipErr{kind: kindMismatch, reason: fmt.Sprintf("%s 给的规则读不懂", c.src.Name), detail: err.Error()}
 	}
 	if !strings.EqualFold(r.Name, c.name) || !safeName.MatchString(r.Name) {
-		return nil, fmt.Errorf("%s 给的规则名字对不上（%s）", c.src.Name, r.Name)
+		return nil, &skipErr{kind: kindMismatch, reason: fmt.Sprintf("%s 给的规则名字对不上（%s）", c.src.Name, r.Name)}
 	}
 	if cmp, ok := compareVersion(string(r.Version), c.version); !ok || cmp != 0 {
-		return nil, fmt.Errorf("%s 清单写 %s，文件里却是 %s", c.src.Name, c.version, r.Version)
+		return nil, &skipErr{kind: kindMismatch, reason: fmt.Sprintf("%s 清单写 %s，文件里却是 %s", c.src.Name, c.version, r.Version)}
 	}
+	// 往下的都是"文件没问题，就是这个版本本身用不了"
 	lv, ok := apiLevel(string(r.API))
 	if !ok || lv > maxAPILevel {
-		return nil, fmt.Errorf("规则要求更新的引擎（api %s）", r.API)
+		return nil, &skipErr{kind: kindEngine, reason: fmt.Sprintf("规则要求更新的引擎（api %s）", r.API), sure: true}
+	}
+	switch why := r.Unsupported(); why {
+	case "":
+	case "captcha":
+		return nil, &skipErr{kind: kindCaptcha, reason: "需要验证码", detail: c.src.Name, sure: true}
+	default:
+		return nil, &skipErr{kind: kindInvalid, reason: "规则内容不完整", detail: why, sure: true}
+	}
+	if err := s.o.Validate(r); err != nil {
+		detail := err.Error()
+		var p *engine.RuleProblem
+		if errors.As(err, &p) {
+			detail = p.Detail()
+		}
+		return nil, &skipErr{kind: kindInvalid, reason: err.Error(), detail: detail, sure: true}
 	}
 	return r, nil
 }

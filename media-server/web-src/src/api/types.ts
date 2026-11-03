@@ -68,6 +68,15 @@ export interface RuleChange {
   to?: string
 }
 
+// 上游有新版、这次没换成的站。kind / currentVersion 是 2026-11-03 加的，旧状态里没有
+export interface RuleSkip {
+  name: string
+  version: string // 上游的版本
+  reason: string
+  kind?: string // captcha 要验证码 / invalid 引擎暂未兼容 / engine 要更新盒子程序 / download 没下载下来 / mismatch 镜像给的文件不对
+  currentVersion?: string // 还在继续用的那一版；新站没有
+}
+
 export interface RuleSyncStatus {
   enabled: boolean
   running: boolean
@@ -76,7 +85,7 @@ export interface RuleSyncStatus {
   error?: string
   note?: string
   sources?: { name: string; ok: boolean; count?: number; error?: string }[]
-  skipped?: { name: string; version: string; reason: string }[]
+  skipped?: RuleSkip[]
   lastChanged?: string
   updated?: RuleChange[]
   added?: RuleChange[]

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/client'
-import type { RuleChange, RuleInfo, RuleSyncStatus } from '../api/types'
+import type { RuleChange, RuleInfo, RuleSkip, RuleSyncStatus } from '../api/types'
 import { SEED_PRESETS, themeState, type ThemeMode } from '../theme/theme'
 import { isRuleEnabled, setRuleEnabled } from '../composables/settings'
 import { bcall, bjson, hasBridge } from '../composables/bridge'
@@ -59,6 +59,28 @@ function changeText(st: RuleSyncStatus): string {
   return parts.join('，')
 }
 
+// 一个没换成的站：哪一站、上游哪版、为什么、现在继续用哪版
+function skipText(s: RuleSkip): string {
+  if (!s.kind) return `${s.name} ${s.version}：${s.reason}` // 老版本盒子存的记录没有分类
+  const cur = s.currentVersion
+  const keep = cur ? `继续使用 ${cur}` : '先不启用'
+  const head = `${s.name}：上游 ${s.version}`
+  switch (s.kind) {
+    case 'captcha':
+      return cur
+        ? `${head} 需要验证码，${keep}；旧网站若已失效，该站仍可能不可用。`
+        : `${head} 需要验证码，${keep}。`
+    case 'invalid':
+      return `${head} 的${s.reason}，${keep}。`
+    case 'engine':
+      return `${head} 要更新盒子程序才能用，${keep}。`
+    case 'download':
+      return `${head} 这次没下载下来，${keep}，一小时后再试。`
+    default:
+      return `${head} 没换成（${s.reason}），${keep}。`
+  }
+}
+
 const ruleSyncLines = computed<string[]>(() => {
   const st = ruleSync.value
   if (!st) return []
@@ -67,10 +89,22 @@ const ruleSyncLines = computed<string[]>(() => {
   if (!st.lastCheck) return ['盒子开机两分钟后会自动检查一次，之后每天凌晨检查']
   const lines = [`上次检查：${whenText(st.lastCheck)}，` + (st.lastOk ? '没问题' : `没成功（${st.error ?? '原因不明'}）`)]
   if (st.lastChanged) lines.push(`最近一次变化：${whenText(st.lastChanged)} ${changeText(st)}`)
-  if (st.skipped?.length) lines.push(`有 ${st.skipped.length} 条规则上游出了新版，这次没换成：${st.skipped.map((s) => s.name).join('、')}`)
+  for (const s of st.skipped ?? []) lines.push(skipText(s))
   if (st.note) lines.push(st.note)
   return lines
 })
+
+// 手动检查完的提示：有更新、有没换成的都要说到，两样都没有才是"都是最新的"
+function checkResultText(st: RuleSyncStatus): string {
+  if (!st.lastOk) return '没检查成功：' + (st.error ?? '原因不明')
+  const changed = st.lastChanged && st.lastChanged === st.lastCheck ? changeText(st) : ''
+  const n = st.skipped?.length ?? 0
+  const skipped = n ? `${n} 个站上游有新版但没换成，原因写在下面` : ''
+  if (changed && skipped) return `规则更新好了：${changed}；另有 ${skipped}`
+  if (changed) return '规则更新好了：' + changed
+  if (skipped) return skipped
+  return '规则都是最新的'
+}
 
 async function checkRules() {
   if (ruleChecking.value) return
@@ -78,7 +112,7 @@ async function checkRules() {
   try {
     const st = await api.ruleSyncNow()
     ruleSync.value = st
-    toast(st.lastChanged && st.lastChanged === st.lastCheck ? '规则更新好了：' + changeText(st) : '规则都是最新的')
+    toast(checkResultText(st))
   } catch (e) {
     toast('没检查成功：' + (e instanceof Error ? e.message : '原因不明'))
     ruleSync.value = await api.ruleSync().catch(() => ruleSync.value)
