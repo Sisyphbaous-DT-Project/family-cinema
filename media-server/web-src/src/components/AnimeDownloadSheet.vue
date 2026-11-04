@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { api } from '../api/client'
+import { api, type AnimeDownloadCover } from '../api/client'
 import type { FolderItem } from '../api/manage'
 import { toast } from '../composables/snackbar'
 import BottomSheet from './m3/BottomSheet.vue'
@@ -14,6 +14,7 @@ const props = defineProps<{
   sourceRef: string
   title: string
   episodes: { name: string; url: string; index: number }[]
+  cover?: AnimeDownloadCover | null
   /** "约 1.1 GB"（多选时量出来的），空串 = 还不知道 */
   sizeText?: string
   /** 盒子硬盘还剩多少（"120 GB"） */
@@ -71,6 +72,7 @@ async function submit() {
       folder: dest.value === 'new' ? folder.value.trim() : '',
       targetId: dest.value === 'existing' ? target.value!.id : '',
       episodes: props.episodes,
+      cover: props.cover,
     })
     if (!r.ok) throw new Error('提交失败，请再试一次')
     open.value = false

@@ -11,6 +11,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONObject
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
@@ -22,6 +23,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var sniffWorker: SniffWorker
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var proxyRouter: ProxyRouter
+    private lateinit var appBridge: WebAppBridge
+    @Volatile private var bridgeClosed = false
     @Volatile private var online = false
     @Volatile private var serverAddr = ""
     // 点追番通知进来时要打开的页面（如 /play/412008），页面加载时带上
@@ -99,39 +102,48 @@ class MainActivity : AppCompatActivity() {
                 customCallback?.onCustomViewHidden(); customCallback = null
             }
         }
-        webView.addJavascriptInterface(
-            WebAppBridge(
-                ctx = this,
-                store = store,
-                server = server,
-                updateMgr = updateMgr,
-                prefs = prefs,
-                isOnlineCheck = { online },
-                onOrientation = { landscape ->
-                    // 由 Activity 层转横屏，用户开了系统旋转锁定也照样生效；
-                    // 同时进/退沉浸式全屏（隐藏状态栏，否则播放时顶上一条白边很碍眼）
-                    runOnUiThread {
-                        requestedOrientation = if (landscape)
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        else
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                        applyImmersive(landscape)
+        appBridge = WebAppBridge(
+            ctx = this,
+            store = store,
+            server = server,
+            updateMgr = updateMgr,
+            prefs = prefs,
+            isOnlineCheck = { online },
+            onOrientation = { landscape ->
+                // 由 Activity 层转横屏，用户开了系统旋转锁定也照样生效；
+                // 同时进/退沉浸式全屏（隐藏状态栏，否则播放时顶上一条白边很碍眼）
+                runOnUiThread {
+                    requestedOrientation = if (landscape)
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    else
+                        android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    applyImmersive(landscape)
+                }
+            },
+            onKeepScreenOn = { on ->
+                // FLAG_KEEP_SCREEN_ON 只在本 Activity 前台时生效，退后台/锁屏不会耗电，
+                // 重复 addFlags 幂等，无需自己做状态去重
+                runOnUiThread {
+                    if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            },
+            onSystemBars = { color, dark -> runOnUiThread { applySystemBars(color, dark) } },
+            sniffWorker = sniffWorker,
+            proxyRouter = proxyRouter,
+            onBgmResult = { id, result ->
+                runOnUiThread {
+                    if (!bridgeClosed) {
+                        webView.evaluateJavascript(
+                            "if (typeof window.__familyCinemaBgmResult === 'function') " +
+                                "window.__familyCinemaBgmResult(${JSONObject.quote(id)}, ${JSONObject.quote(result)});",
+                            null
+                        )
                     }
-                },
-                onKeepScreenOn = { on ->
-                    // FLAG_KEEP_SCREEN_ON 只在本 Activity 前台时生效，退后台/锁屏不会耗电，
-                    // 重复 addFlags 幂等，无需自己做状态去重
-                    runOnUiThread {
-                        if (on) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    }
-                },
-                onSystemBars = { color, dark -> runOnUiThread { applySystemBars(color, dark) } },
-                sniffWorker = sniffWorker,
-                proxyRouter = proxyRouter
-            ),
-            "AndroidBridge"
+                }
+            }
         )
+        webView.addJavascriptInterface(appBridge, "AndroidBridge")
         ensureBackgroundPermissions()
         boot()
     }
@@ -271,6 +283,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        bridgeClosed = true
+        if (::appBridge.isInitialized) appBridge.close()
         // 解析助手由前台服务持有，界面销毁不影响它
         try { server.stop() } catch (e: Exception) {}
         super.onDestroy()

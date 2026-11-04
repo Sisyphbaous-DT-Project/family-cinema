@@ -8,6 +8,8 @@ import android.os.Build
 import android.webkit.JavascriptInterface
 import androidx.core.app.NotificationManagerCompat
 import org.json.JSONObject
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 // 前端（JS）调原生的桥。每个 @JavascriptInterface 方法对应前端 Bridge.xxx。
 // 接口一次设计宽，尽量减少"加原生能力必须重装 APK"的情况。
@@ -22,13 +24,42 @@ class WebAppBridge(
     private val onKeepScreenOn: (Boolean) -> Unit,
     private val onSystemBars: (Int, Boolean) -> Unit,
     private val sniffWorker: SniffWorker,
-    private val proxyRouter: ProxyRouter
+    private val proxyRouter: ProxyRouter,
+    private val onBgmResult: (String, String) -> Unit
 ) {
+    private val bgmExecutor = Executors.newFixedThreadPool(3)
+    @Volatile private var bgmClosed = false
+
     // ---- Bangumi 网络：bgm.tv 被墙，前端对它的请求全部从这里走（自动选路见 ProxyRouter） ----
     // method/path/body → 同步返回 {"status":200,"body":"..."} 或 {"error":"..."}
     @JavascriptInterface
     fun bgmRequest(method: String, path: String, body: String): String =
         proxyRouter.requestJson(method, "https://api.bgm.tv$path", body)
+
+    // 只登记后台工作，桥调用立即返回，让网页继续导航和绘制。
+    @JavascriptInterface
+    fun bgmRequestAsync(id: String, method: String, path: String, body: String) {
+        if (bgmClosed) return
+        try {
+            bgmExecutor.execute {
+                if (bgmClosed) return@execute
+                val result = try {
+                    proxyRouter.requestJson(method, "https://api.bgm.tv$path", body)
+                } catch (e: Exception) {
+                    JSONObject().put("error", "App 网络通道异常").toString()
+                }
+                if (!bgmClosed) onBgmResult(id, result)
+            }
+        } catch (e: RejectedExecutionException) {
+            if (!bgmClosed) onBgmResult(id, JSONObject().put("error", "App 网络通道异常").toString())
+        }
+    }
+
+    fun close() {
+        bgmClosed = true
+        // 未开始的任务丢弃；已发出的连接仍由 ProxyRouter 的原有超时结束。
+        bgmExecutor.shutdownNow()
+    }
 
     @JavascriptInterface
     fun getBgmProxy(): String = proxyRouter.configJson()

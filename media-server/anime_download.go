@@ -2,7 +2,7 @@ package main
 
 // 番剧"下载到盒子"：前端在番剧播放页选几集（或整部），选好存到哪（新建文件夹 / 并入已有文件夹），
 // 盒子同时处理 2 集：解析视频地址 → 下载（分段视频拼成 mp4）→ 存成"第NN集.mp4"，下好一集就重扫片库，
-// 全部下完没封面的自动补封面。任务并进 ListTasks（和 BT 下载同一张任务表）：片库页"盒子正在下载"
+// 指定的 Bangumi 封面独立后台保存。任务并进 ListTasks（和 BT 下载同一张任务表）：片库页"盒子正在下载"
 // 卡片、片库管理的下载任务页都能看进度、能停。任务只在内存里（和 BT 任务一样，盒子重启就没了）。
 
 import (
@@ -46,7 +46,8 @@ type animeDLTask struct {
 	// 排进队时拿到的规则，整个任务都用它：排队期间规则可能被每日同步下架，开始时再按名字取会取到空的
 	ruleObj *rules.Rule
 	ref     string
-	eps     []animeDLEpisode // 受 animeDL.mu 保护：重试时往运行中的任务追加
+	cover   *animeCoverSelection // 本次选定的封面；重试沿用，info.Cover 只放已落盘的路径
+	eps     []animeDLEpisode     // 受 animeDL.mu 保护：重试时往运行中的任务追加
 	ctx     context.Context
 	cancel  context.CancelFunc
 	queued  bool
@@ -75,12 +76,13 @@ func initAnimeDownload(mux *http.ServeMux, a *animeapi.API) {
 // ---- 接口 ----
 
 type animeDLRequest struct {
-	Rule     string `json:"rule"`
-	Ref      string `json:"ref"`      // 作品来源（详情页地址或编号），解析时当 Referer 用
-	Title    string `json:"title"`    // 番名
-	Category string `json:"category"` // 新建文件夹时放哪类：series（默认）/ movie
-	Folder   string `json:"folder"`   // 新建文件夹的名字（空则用番名）
-	TargetID string `json:"targetId"` // 非空：并入这个已有条目的文件夹（分类跟着它）
+	Rule     string               `json:"rule"`
+	Ref      string               `json:"ref"`      // 作品来源（详情页地址或编号），解析时当 Referer 用
+	Title    string               `json:"title"`    // 番名
+	Category string               `json:"category"` // 新建文件夹时放哪类：series（默认）/ movie
+	Folder   string               `json:"folder"`   // 新建文件夹的名字（空则用番名）
+	TargetID string               `json:"targetId"` // 非空：并入这个已有条目的文件夹（分类跟着它）
+	Cover    *animeCoverSelection `json:"cover,omitempty"`
 	Episodes []struct {
 		Name  string `json:"name"`
 		URL   string `json:"url"`
@@ -164,15 +166,20 @@ func handleAnimeDownload(w http.ResponseWriter, r *http.Request) {
 		eps = append(eps, animeDLEpisode{Label: label, File: file, URL: e.URL})
 	}
 	if len(eps) == 0 {
+		if skipped > 0 {
+			startAnimeCover(dir, req.Cover)
+		}
 		animeDLJSON(w, map[string]any{"ok": true, "queued": 0, "skipped": skipped, "dir": title})
 		return
 	}
 
 	t := newAnimeDLTask(rule, req.Ref, title, category, dir, eps)
+	t.cover = req.Cover
 	animeDL.mu.Lock()
 	animeDL.tasks = append([]*animeDLTask{t}, animeDL.tasks...)
 	trimAnimeDLHistory()
 	animeDL.mu.Unlock()
+	startAnimeCover(dir, t.cover)
 	select {
 	case animeDL.wake <- struct{}{}:
 	default:
@@ -247,7 +254,7 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 		writeAnimeDLError(w, "没有要重试的集")
 		return
 	}
-	name, dir := t.info.Name, t.info.TargetDir
+	name, dir, cover := t.info.Name, t.info.TargetDir, t.cover
 	if t.info.Status == "running" && !t.closing {
 		// 已经在下载/等着拼/刚点过重试的集不再排第二遍，否则同一集会被同时下好几份
 		busy := make(map[string]bool, len(t.info.AnimeActive))
@@ -277,6 +284,7 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 		default:
 		}
 		animeDL.mu.Unlock()
+		startAnimeCover(dir, cover)
 		animeDLJSON(w, map[string]any{"ok": true, "id": id, "queued": queued, "dir": name})
 		return
 	}
@@ -298,10 +306,12 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nt := newAnimeDLTask(rule, ref, name, category, dir, eps)
+	nt.cover = cover
 	animeDL.mu.Lock()
 	animeDL.tasks = append([]*animeDLTask{nt}, animeDL.tasks...)
 	trimAnimeDLHistory()
 	animeDL.mu.Unlock()
+	startAnimeCover(dir, nt.cover)
 	select {
 	case animeDL.wake <- struct{}{}:
 	default:
@@ -832,9 +842,6 @@ func runAnimeDLTask(t *animeDLTask) {
 			}
 		}
 	})
-	if okN > 0 {
-		go ensureFolderCover(t.info.TargetDir) // 找封面最多要 45 秒，别拖着下一个任务
-	}
 }
 
 // resolveForDownload 解析视频地址；要手机帮忙而手机不在线时，隔一会儿再试（onWait 通知界面"等手机"），最多等 animeDLWaitPhone。
@@ -893,18 +900,4 @@ func placeFile(src, dst string) error {
 func animeDLJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(v)
-}
-
-// ensureFolderCover 文件夹还没封面就按片名自动找一张（和片库管理"补封面"同一套）
-func ensureFolderCover(dir string) {
-	items, _ := LibrarySnapshot("all")
-	for _, it := range items {
-		if it.Path != dir || it.Cover != "" {
-			continue
-		}
-		if res := fetchCoverFor(it); res.Path != "" {
-			ScanLibrary()
-		}
-		return
-	}
 }

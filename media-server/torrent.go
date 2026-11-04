@@ -602,6 +602,9 @@ func ListTasks() []TorrentTask {
 	return append(anime, out...)
 }
 
+// 封面发布只串行本地写入，联网取图不占这把锁。
+var coverPublishMu sync.Mutex
+
 // saveCover 保存封面到目标目录下的 folder.jpg。
 // cover 支持两种形式：http(s) URL，或 data:image/...;base64,xxx（前端上传的图片）
 func saveCover(dir, cover string) (string, error) {
@@ -660,6 +663,8 @@ func saveCover(dir, cover string) (string, error) {
 	if !looksLikeImage(data) {
 		return "", fmt.Errorf("封面不是有效的图片格式")
 	}
+	coverPublishMu.Lock()
+	defer coverPublishMu.Unlock()
 	// 统一存成 folder.jpg/png，媒体库扫描时会自动识别
 	p := filepath.Join(dir, "folder"+ext)
 	if err := os.WriteFile(p, data, 0644); err != nil {

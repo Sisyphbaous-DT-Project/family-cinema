@@ -6,6 +6,11 @@ import { isOffline } from '../composables/cache'
 
 const BASE = '/api/anime'
 
+export type AnimeDownloadCover = {
+  source: 'bangumi'
+  url: string
+}
+
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   // 离线时盒子不可达（App 本地服务对这些路径一律 404），直接给友好提示
   if (isOffline()) throw new Error('现在是离线模式，连上家里的网络后才能用')
@@ -64,6 +69,7 @@ export const api = {
     folder: string
     targetId: string
     episodes: { name: string; url: string; index: number }[]
+    cover?: AnimeDownloadCover | null
   }): Promise<{ ok: boolean; id?: string; queued: number; skipped: number; dir: string }> => post('/download', p),
   /** 重试下载失败的几集；files 为空 = 所有失败的集 */
   retryDownload: (taskId: string, files: string[] = []) =>

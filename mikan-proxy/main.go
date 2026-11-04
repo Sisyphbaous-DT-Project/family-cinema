@@ -5,9 +5,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log"
 	"net"
@@ -119,6 +124,10 @@ func handleTunnel(w http.ResponseWriter, r *http.Request) {
 // 抓取端点：盒子用普通 HTTP GET 获取 mikan 页面/图片，绕开 CONNECT 隧道被中间设备拦截的问题
 // 用法: GET /fetch?url=https%3A%2F%2Fmikanani.me%2FHome%2FSearch%3Fsearchstr%3D...
 func handleFetch(w http.ResponseWriter, r *http.Request) {
+	if _, encoded := r.URL.Query()["u"]; encoded {
+		handleCoverFetch(w, r)
+		return
+	}
 	target := r.URL.Query().Get("url")
 	u, err := url.Parse(target)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
@@ -156,6 +165,95 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 	buf := make([]byte, 32*1024)
 	_, _ = io.CopyBuffer(w, resp.Body, buf)
+}
+
+const maxCoverBytes = 12 << 20
+
+// 新封面链路只接受完整编码的 Bangumi 图片地址，旧蜜柑参数保持原行为。
+func parseCoverTarget(encoded string) (*url.URL, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("bad encoding")
+	}
+	u, err := url.Parse(string(raw))
+	if err != nil || !allowedCoverTarget(u) {
+		return nil, fmt.Errorf("forbidden target")
+	}
+	return u, nil
+}
+
+func allowedCoverTarget(u *url.URL) bool {
+	return u != nil && u.Scheme == "https" &&
+		strings.EqualFold(u.Hostname(), "lain.bgm.tv") &&
+		(u.Port() == "" || u.Port() == "443") &&
+		u.User == nil && u.Fragment == "" && u.Opaque == ""
+}
+
+func coverRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 || !allowedCoverTarget(req.URL) {
+		return fmt.Errorf("forbidden redirect")
+	}
+	return nil
+}
+
+func handleCoverFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, err := parseCoverTarget(r.URL.Query().Get("u"))
+	if err != nil {
+		http.Error(w, "bad cover target", http.StatusBadRequest)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		http.Error(w, "bad cover target", http.StatusBadRequest)
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Accept", "image/jpeg,image/png,image/gif")
+	transport := &http.Transport{Proxy: http.ProxyURL(up)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport, Timeout: 60 * time.Second, CheckRedirect: coverRedirect,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "cover fetch failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "cover upstream status", http.StatusBadGateway)
+		return
+	}
+	data, contentType, err := readCoverImage(resp.Body)
+	if err != nil {
+		http.Error(w, "invalid or oversized cover image", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+	_, _ = w.Write(data)
+}
+
+func readCoverImage(body io.Reader) ([]byte, string, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxCoverBytes+1))
+	if err != nil || len(data) > maxCoverBytes {
+		return nil, "", fmt.Errorf("cover exceeds limit or is incomplete")
+	}
+	_, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid cover image")
+	}
+	contentTypes := map[string]string{"jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif"}
+	contentType, ok := contentTypes[format]
+	if !ok {
+		return nil, "", fmt.Errorf("unsupported cover image")
+	}
+	return data, contentType, nil
 }
 
 func main() {

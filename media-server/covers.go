@@ -147,6 +147,8 @@ func fetchCoverFor(it MediaItem) CoverResult {
 			if data[0] == 0x89 {
 				ext = ".png"
 			}
+			coverPublishMu.Lock()
+			defer coverPublishMu.Unlock()
 			p := filepath.Join(it.Path, "folder"+ext)
 			if err := os.WriteFile(p, data, 0644); err != nil {
 				out.Error = "写入失败: " + err.Error()

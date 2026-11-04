@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, titleOf } from '../api/client'
+import { api, titleOf, type AnimeDownloadCover } from '../api/client'
 import { peekSubject } from '../api/bangumi'
 import { coverHint, holdTransition } from '../composables/motion'
 import { fmtSize } from '../api/local'
@@ -56,7 +56,7 @@ onMounted(async () => {
 })
 
 const title = computed(() => (subject.value ? titleOf(subject.value) : hint?.title ?? ''))
-const cover = computed(() => subject.value?.images.large || subject.value?.images.common || hint?.img || '')
+const cover = computed(() => subject.value?.images.common || subject.value?.images.large || hint?.img || '')
 const playerTitle = computed(() => [title.value, pb.currentEp.value?.name].filter(Boolean).join(' · '))
 const itemCount = computed(() => pb.currentSource.value?.items.length ?? 0)
 const { line: airLine, cn: airCn } = useAirtime(id, subject)
@@ -76,6 +76,7 @@ watch(
 const dlMode = ref(false)
 const dlSelected = reactive(new Set<number>())
 const dlSheet = ref(false)
+const dlCover = ref<AnimeDownloadCover | null>(null)
 const allOn = computed(() => {
   const n = pb.currentRoad.value?.episodes.length ?? 0
   return n > 0 && dlSelected.size === n
@@ -92,6 +93,8 @@ const epsEl = ref<HTMLElement | null>(null)
 const cellMin = useFitCells(epsEl, { base: 72, deps: [() => pb.currentRoad.value, dlMode, dl.stateSignature, sz.signature] })
 
 function startDownload() {
+  const url = cover.value
+  dlCover.value = url ? { source: 'bangumi', url } : null
   dlSelected.clear()
   dlMode.value = true
 }
@@ -99,6 +102,7 @@ function exitDownload() {
   dlSelected.clear()
   dlMode.value = false
   dlSheet.value = false
+  dlCover.value = null
 }
 function onQueued() {
   exitDownload()
@@ -331,6 +335,7 @@ function onEnded() {
       :source-ref="pb.currentItem.value?.src ?? ''"
       :title="title"
       :episodes="pickedEpisodes"
+      :cover="dlCover"
       :size-text="sz.totalText.value"
       :disk-free="sz.disk.value?.freeH ?? ''"
       :too-big="sz.tooBig.value"

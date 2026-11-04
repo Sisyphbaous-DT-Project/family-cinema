@@ -12,13 +12,78 @@ const OFFLINE_MSG = '现在是离线模式，连上家里的网络后才能用'
 // App 原生桥提供的请求通道（自动代理在原生层完成，见 ProxyRouter.kt）
 interface BgmBridge {
   bgmRequest?: (method: string, path: string, body: string) => string
+  bgmRequestAsync?: (id: string, method: string, path: string, body: string) => void
+}
+
+type BgmWindow = Window & {
+  AndroidBridge?: BgmBridge
+  __familyCinemaBgmResult?: (id: string, result: string) => void
 }
 
 function bridge(): BgmBridge | null {
-  return (window as unknown as { AndroidBridge?: BgmBridge }).AndroidBridge ?? null
+  return (window as BgmWindow).AndroidBridge ?? null
 }
 
 export class BgmError extends Error {}
+
+const BRIDGE_TIMEOUT = 90_000
+const bridgePrefix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+let bridgeSequence = 0
+const bridgePending = new Map<string, (result: string) => void>()
+
+function parseBridgeResponse<T>(text: string): T {
+  let res: { status?: number; body?: string; error?: string }
+  try {
+    res = JSON.parse(text)
+    if (!res || typeof res !== 'object') throw new Error()
+  } catch {
+    throw new BgmError('App 网络通道异常')
+  }
+  if (res.error) throw new BgmError(res.error)
+  if (res.status !== 200) throw new BgmError(`Bangumi 返回 ${res.status}`)
+  try {
+    return JSON.parse(res.body ?? '') as T
+  } catch {
+    throw new BgmError('Bangumi 返回的数据无法解析')
+  }
+}
+
+function requestAsyncBridge(b: BgmBridge, method: string, path: string, payload: string, signal?: AbortSignal): Promise<string> {
+  const w = window as BgmWindow
+  w.__familyCinemaBgmResult = (id, result) => bridgePending.get(id)?.(result)
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('请求已取消', 'AbortError'))
+      return
+    }
+    const id = `${bridgePrefix}-${++bridgeSequence}`
+    let timer: ReturnType<typeof setTimeout>
+    const cleanup = () => {
+      bridgePending.delete(id)
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const onAbort = () => {
+      cleanup()
+      reject(new DOMException('请求已取消', 'AbortError'))
+    }
+    bridgePending.set(id, (result) => {
+      cleanup()
+      resolve(result)
+    })
+    timer = setTimeout(() => {
+      cleanup()
+      reject(new BgmError('App 网络请求超时，请稍后再试'))
+    }, BRIDGE_TIMEOUT)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      b.bgmRequestAsync!(id, method, path, payload)
+    } catch {
+      cleanup()
+      reject(new BgmError('App 网络通道异常'))
+    }
+  })
+}
 
 // 番剧详情记 10 分钟：详情页 → 播放页 → 返回详情页都用同一份，页面一打开就有内容（换页动画能直接落在海报上）
 const SUBJECT_TTL = 10 * 60_000
@@ -30,25 +95,23 @@ export function peekSubject(id: number): Subject | null {
   return hit && Date.now() - hit.at < SUBJECT_TTL ? hit.v ?? null : null
 }
 
-/** 统一请求入口：App 走桥（同步返回 JSON 字符串），浏览器走 fetch */
+/** 统一请求入口：新 App 走异步桥，旧 App 回退同步桥，浏览器走 fetch */
 async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   if (isOffline()) throw new BgmError(OFFLINE_MSG)
+  if (signal?.aborted) throw new DOMException('请求已取消', 'AbortError')
   const payload = body === undefined ? '' : JSON.stringify(body)
   const b = bridge()
+  if (b?.bgmRequestAsync) {
+    return parseBridgeResponse<T>(await requestAsyncBridge(b, method, path, payload, signal))
+  }
   if (b?.bgmRequest) {
-    let res: { status?: number; body?: string; error?: string }
+    let result: string
     try {
-      res = JSON.parse(b.bgmRequest(method, path, payload))
+      result = b.bgmRequest(method, path, payload)
     } catch {
       throw new BgmError('App 网络通道异常')
     }
-    if (res.error) throw new BgmError(res.error)
-    if (res.status !== 200) throw new BgmError(`Bangumi 返回 ${res.status}`)
-    try {
-      return JSON.parse(res.body ?? '') as T
-    } catch {
-      throw new BgmError('Bangumi 返回的数据无法解析')
-    }
+    return parseBridgeResponse<T>(result)
   }
   let res: Response
   try {
