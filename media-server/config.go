@@ -27,6 +27,12 @@ type Config struct {
 	BTUPnP      bool           `json:"btUPnP"`      // 自动向路由器申请端口映射，让 peer 能主动连进来
 	Anime       AnimeConfig    `json:"anime"`       // 番剧聚合（Bangumi + 规则 + 播放代理）
 	Media       MediaConfig    `json:"media"`       // 声音转换与字幕提取
+	Pansou      PansouConfig   `json:"pansou"`      // 可选网盘搜索服务
+}
+
+type PansouConfig struct {
+	Enabled bool   `json:"enabled"`
+	URL     string `json:"url"`
 }
 
 // AnimeConfig 番剧聚合配置。目录留空表示放在可执行文件同目录下（rules/、anime-cache/），
@@ -81,6 +87,7 @@ func defaultConfig() Config {
 		BTUPnP:      true,
 		Anime:       AnimeConfig{Enabled: true, ImgCacheMB: 300, RuleSync: true},
 		Media:       MediaConfig{Enabled: true},
+		Pansou:      PansouConfig{Enabled: true, URL: "http://127.0.0.1:8888"},
 	}
 }
 

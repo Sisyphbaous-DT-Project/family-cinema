@@ -1,10 +1,21 @@
 # Family Cinema · 家庭影院
 
-把一台闲置的 ARMv7 安卓机顶盒变成家庭媒体服务器，再用手机、电脑浏览器或安卓 App 观看自己的媒体库。
+把 Windows 电脑、Linux 主机或闲置的 ARMv7 安卓机顶盒变成家庭媒体服务器，再用手机、电脑浏览器或安卓 App 观看自己的媒体库。
 
 主服务采用 Go，网页采用 Vue 3 + Vite，安卓 App 采用 Kotlin。网页、视频缓存、番剧聚合、手机辅助解析和追番提醒由同一套系统协作完成。
 
 > 这是一个自托管项目，不是在线影视服务。仓库不包含影片、电视剧、账号、会员凭据或私人配置。
+
+## Windows 一键部署
+
+在本仓库的 [Releases](https://github.com/Sisyphbaous-DT-Project/family-cinema/releases) 下载 Windows 安装器 `.exe`。选择程序与媒体目录后，安装器会通过下载镜像获取固定版本源码、准备独立 Go 环境、编译并启动服务，不需要自己安装开发工具或 Docker。
+
+- **PanSou 默认勾选**，可取消或以后补装；声音转换与字幕工具、登录后启动、手机局域网访问可按需选择。
+- 安装页与家庭影院使用同一套 Material 3 配色和控件，支持深浅色；多个下载源后台测速，国内工具镜像直连。
+- 安卓 APK 和 Windows 安装器放在同一个 Release。安装器下载已签名的 APK 并交给主服务托管，手机不参与编译。
+- 再次运行安装器可以启动、停止、更新和查看日志，更新保留媒体、配置与运行数据。
+
+系统要求、目录安排、下载失败处理和手机连接方法见 [Windows 安装说明](docs/windows-installation.md)。自行编译的开发环境要求见下文。
 
 ## 功能
 
@@ -27,7 +38,8 @@
 | `rescue-server/` | 独立救援工具箱，默认端口 8089 |
 | `mikan-proxy/` | 可选的自托管 mikan 请求转发器 |
 | `pansou/` | PanSou 固定上游版本的 ARMv7 补丁与构建脚本，默认端口 8888 |
-| `scripts/` | 盒子上的服务控制脚本 |
+| `windows/` | Windows 原生一键部署程序与构建脚本 |
+| `scripts/` | 服务控制、Android 发布与发行打包脚本 |
 | `tools/` | Windows 运维面板与 ADB 屏幕查看器 |
 
 ## 环境要求
@@ -86,6 +98,8 @@ gradle --no-daemon assembleDebug
 ```
 
 Windows 也可以运行 `build_apk.bat`。输出是 `app/build/outputs/apk/debug/app-debug.apk`。这是用于开发验证的 debug 包，不是正式发布签名包。
+
+正式 APK 使用独立的发行签名，构建方法见 [Android 发布说明](docs/android-release.md)。签名私钥不保存在仓库或安装器中。
 
 首次使用 App 时让它自动发现盒子，或者在设置中填写 `http://<你的盒子地址>:8088`。手机辅助解析、手机代取与追番通知需要额外权限，应按实际需要使用。
 

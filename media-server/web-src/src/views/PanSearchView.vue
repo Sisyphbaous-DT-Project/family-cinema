@@ -3,7 +3,7 @@
 // 盘搜是"先回快的、慢的网站后台接着搜"：第一次大约 10 秒出结果，之后隔几秒再要两次，结果会变多。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { copyTextOf, panSearch, PAN_TYPES, type PanLink, type PanResult } from '../api/pansou'
+import { copyTextOf, loadPansouFeatures, pansouEnabled, panSearch, PAN_TYPES, type PanLink, type PanResult } from '../api/pansou'
 import { coverURL, fetchLibrary, type LocalItem } from '../api/local'
 import { btDownload } from '../api/manage'
 import { bcall, hasBridge } from '../composables/bridge'
@@ -107,6 +107,7 @@ async function findLocal(k: string) {
 }
 
 function submit(k?: string) {
+  if (!pansouEnabled.value) return
   const v = (k ?? q.value).trim()
   if (!v) return
   q.value = v
@@ -133,7 +134,8 @@ function clearHistory() {
   writeJSON(HIST_KEY, [])
 }
 
-onMounted(() => {
+onMounted(async () => {
+  if (!await loadPansouFeatures()) return
   if (q.value.trim()) submit(q.value)
   else nextTick(() => input.value?.focus())
 })
@@ -202,7 +204,7 @@ async function doDownload() {
   <div class="page">
     <header ref="barEl" class="bar fc-edge" :class="{ on: barScrolled }">
       <IconButton icon="back" label="返回" @click="$router.back()" />
-      <form class="field" data-hero="pansou" @submit.prevent="submit()">
+      <form v-if="pansouEnabled" class="field" data-hero="pansou" @submit.prevent="submit()">
         <input
           ref="input"
           v-model="q"
@@ -219,7 +221,12 @@ async function doDownload() {
 
     <div class="wrap">
       <!-- 还没搜：搜索历史 + 说明 -->
-      <template v-if="!kw">
+      <div v-if="!pansouEnabled" class="state">
+        <Icon name="search" :size="40" />
+        <div class="t-body-l">当前未安装盘搜</div>
+        <div class="t-body-m muted">可在 Windows 一键程序中勾选盘搜后安装。</div>
+      </div>
+      <template v-else-if="!kw">
         <section v-if="history.length">
           <div class="hhead">
             <span class="t-title-s muted">搜过的</span>

@@ -1,0 +1,15 @@
+{
+  "Version": "1.11.0",
+  "SourceCommit": "REPLACE_WITH_RELEASE_COMMIT",
+  "SourceUrl": "https://github.com/Sisyphbaous-DT-Project/family-cinema/archive/REPLACE_WITH_RELEASE_COMMIT.zip",
+  "SourceSha256": "REPLACE_WITH_SOURCE_ARCHIVE_SHA256",
+  "ApkUrl": "https://github.com/Sisyphbaous-DT-Project/family-cinema/releases/download/v1.11.0/family-cinema-android-1.11.apk",
+  "ApkSha256": "REPLACE_WITH_APK_SHA256",
+  "ApkVersionCode": 12,
+  "ApkVersionName": "1.11",
+  "GoVersion": "1.25.5",
+  "GoSha256": "ae756cce1cb80c819b4fe01b0353807178f532211b47f72d7fa77949de054ebb",
+  "PansouSha256": "5a4b96414a592105f3e9358279e4b87837853781409ed386bd4998d7f768d1ae",
+  "FFmpegUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-06-12-50/ffmpeg-n8.1.3-34-ga35157abb9-win64-lgpl-shared-8.1.zip",
+  "FFmpegSha256": "08897c3d53909d8fde6bd5eb9324e7ca41324890d2b03e22c2f9f31025789ee2"
+}

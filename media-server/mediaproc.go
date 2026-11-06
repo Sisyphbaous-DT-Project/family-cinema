@@ -132,11 +132,15 @@ func (m *mediaProcManager) start() {
 	m.statePath = filepath.Join(m.stateDir, "state.json")
 	m.ffmpegPath = m.opts.FFmpegPath
 	m.ffprobePath = m.opts.FFprobePath
+	suffix := ""
+	if runtime.GOOS == "windows" {
+		suffix = ".exe"
+	}
 	if m.ffmpegPath == "" {
-		m.ffmpegPath = filepath.Join(exeDir(), "ffmpeg")
+		m.ffmpegPath = filepath.Join(exeDir(), "ffmpeg"+suffix)
 	}
 	if m.ffprobePath == "" {
-		m.ffprobePath = filepath.Join(exeDir(), "ffprobe")
+		m.ffprobePath = filepath.Join(exeDir(), "ffprobe"+suffix)
 	}
 	m.mu.Unlock()
 

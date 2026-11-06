@@ -3,6 +3,14 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def releaseSigning = [
+    storeFile: System.getenv('FAMILY_CINEMA_KEYSTORE'),
+    storePassword: System.getenv('FAMILY_CINEMA_STORE_PASSWORD'),
+    keyAlias: System.getenv('FAMILY_CINEMA_KEY_ALIAS'),
+    keyPassword: System.getenv('FAMILY_CINEMA_KEY_PASSWORD')
+]
+def hasReleaseSigning = releaseSigning.values().every { it != null && !it.isBlank() }
+
 android {
     namespace 'com.family.cinema'
     compileSdk 34
@@ -11,8 +19,18 @@ android {
         applicationId "com.family.cinema"
         minSdk 26
         targetSdk 34
-        versionCode 11
-        versionName "1.10"
+        versionCode 12
+        versionName "1.11"
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseSigning.storeFile)
+                storePassword releaseSigning.storePassword
+                keyAlias releaseSigning.keyAlias
+                keyPassword releaseSigning.keyPassword
+            }
+        }
     }
     buildTypes {
         debug {
@@ -20,6 +38,10 @@ android {
         }
         release {
             minifyEnabled false
+            debuggable false
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
     compileOptions {
@@ -28,6 +50,14 @@ android {
     }
     kotlinOptions { jvmTarget = '17' }
     buildFeatures { buildConfig = true }
+}
+
+// 正式构建必须提供发布签名，避免把未签名包误上传到 Release。
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.project == project && it.name.toLowerCase().contains('release') }
+            && !hasReleaseSigning) {
+        throw new GradleException('正式构建缺少签名，请使用 scripts/build-release.ps1 并提供外部签名配置。')
+    }
 }
 
 dependencies {

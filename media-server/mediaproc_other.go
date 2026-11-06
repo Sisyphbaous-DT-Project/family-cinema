@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package main
 
@@ -12,6 +12,8 @@ func mediaProcFreeSpace(path string) (int64, error) {
 }
 
 func mediaProcNice(cmd *exec.Cmd) {}
+
+func mediaProcPrepare(cmd *exec.Cmd) {}
 
 func mediaProcKillRecorded(pid int, temps []string) error { return nil }
 

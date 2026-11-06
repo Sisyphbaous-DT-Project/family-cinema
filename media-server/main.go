@@ -102,6 +102,7 @@ func NewServer() *Server {
 
 	// App 应用内升级（/api/app/*）
 	mountAppUpdate(mux, api)
+	mountPansou(mux)
 
 	// 前端热更新清单：App 启动拉这个比对版本，决定要不要下载新前端
 	mux.HandleFunc("/api/web-manifest", api(func(w http.ResponseWriter, r *http.Request) error {
@@ -750,7 +751,9 @@ func main() {
 	// 启动时扫描媒体库
 	go ScanLibrary()
 	// 局域网自动发现应答（App 找盒子用）
-	startDiscovery(cfg.Port)
+	if discoveryAllowed(cfg.ListenAddr) {
+		startDiscovery(cfg.Port)
+	}
 
 	addr := cfg.ListenAddr + ":" + cfg.Port
 	if cfg.ListenAddr == "" {

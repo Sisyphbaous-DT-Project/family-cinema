@@ -12,6 +12,7 @@
 | Vue Router | https://github.com/vuejs/router | MIT，Copyright 2019-present Eduardo San Martin Morote | 打包进 `media-server/web/app.js` |
 | hls.js | https://github.com/video-dev/hls.js | Apache-2.0，Copyright 2017 Dailymotion；含上游注明的 2013-2015 Brightcove 权利声明 | 打包进 `media-server/web/app.js` |
 | Material Color Utilities | https://github.com/material-foundation/material-color-utilities | Apache-2.0，Material Eng / Material Foundation | 打包进 `media-server/web/app.js` |
+| Material Icons | https://github.com/google/material-design-icons | Apache-2.0，Google | 家庭影院及 Windows 安装界面复用的内联图标路径 |
 | Anime4K.js | https://github.com/monyone/Anime4K.js | MIT，Copyright 2023 もにょ～ん | 打包进 `media-server/web/app.js` |
 | Anime4K | https://github.com/bloc97/Anime4K | MIT，Copyright 2019 bloc97 | 着色器经 Anime4K.js 打包进 `media-server/web/app.js` |
 | libpgs | https://github.com/Arcus92/libpgs-js | MIT，Copyright 2024 David Schulte | 图片字幕（PGS）渲染，主线程与 worker 代码都打包进 `media-server/web/app.js`，许可证 `third_party/licenses/libpgs-MIT.txt` |
@@ -26,11 +27,15 @@ PanSou 构建脚本固定上游提交 `221665fb2c9279f22af4684ea2d8c0c331eac1cc`
 - Go 依赖及精确版本见 `media-server/go.mod` 与 `go.sum`。实际编译依赖涉及 86 个模块，已逐一检查本地许可证文件：Apache-2.0、MIT/ISC、BSD 与 MPL；其中 `go-spew` 的 ISC 许可证已人工核实，未发现 GPL/AGPL 阻断项。
 - 网页依赖及精确版本见 `media-server/web-src/package.json` 与 `package-lock.json`。
 - Android 使用 AndroidX 与 NanoHTTPD；NanoHTTPD 上游为 BSD-3-Clause。
+- Windows 安装界面使用 Vue 3、Material Color Utilities 与 Material Icons，许可与上表一致。维护者使用的 `vite-plugin-singlefile` 为 MIT 许可，仅负责把界面构建成离线单文件。
+- Windows 安装器内嵌 Microsoft.Web.WebView2 SDK `1.0.2903.40` 的运行组件，上游为 https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.2903.40，按包内 Microsoft BSD-3-Clause 风格许可证分发。SDK 的 LICENSE 和 NOTICE 作为 EXE 资源一起保留；WebView2 Runtime 由微软独立分发，安装器不会改写其许可。
 - 当前 npm lockfile 的许可字段盘点为：MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC、MPL-2.0。未发现 GPL/AGPL 许可字段；MPL-2.0 的文件级义务仍由对应组件的使用者保留。
 
 ## 可选的外部工具（不随仓库分发）
 
 声音转换和字幕提取调用 FFmpeg 的 `ffmpeg` / `ffprobe` 命令行程序。常见的静态构建（如 johnvansickle.com 的 Linux 版）按 GPLv3 分发，**本仓库不包含、也不打包这两个程序**，代码只按路径启动外部进程；没装时该功能自动关闭，其它功能不受影响。自行下载使用时，请遵守所用构建的许可条款。
+
+Windows 安装器可以按用户选择下载外部 FFmpeg 构建。下载不改变上游许可证；安装目录应保留该构建附带的许可证、说明与源代码地址。Windows 便携 Go 环境来自 Go 官方发行，由下载镜像提供传输，保留其许可证。安装器自身不包含 Android 签名私钥，也不会在用户电脑安装 Android 开发环境。
 
 许可证全文及依赖自身的 NOTICE（如上游提供）应随相应二进制或源码再分发。本仓库保存了直接打包/分发组件的主要许可证，位于 `third_party/licenses/`；Go module、npm 与 Gradle 包在获取时仍带有各自上游许可证。
 

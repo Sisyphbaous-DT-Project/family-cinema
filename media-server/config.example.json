@@ -33,6 +33,10 @@
     "ruleSync": true,
     "ruleSources": []
   },
+  "pansou": {
+    "enabled": true,
+    "url": "http://127.0.0.1:8888"
+  },
   "media": {
     "enabled": true,
     "ffmpegPath": "",

@@ -26,6 +26,8 @@ func mediaProcNice(cmd *exec.Cmd) {
 	}
 }
 
+func mediaProcPrepare(cmd *exec.Cmd) {}
+
 func mediaProcKillRecorded(pid int, temps []string) error {
 	if pid <= 0 || !mediaProcRecordedCommand(pid, temps) {
 		return nil

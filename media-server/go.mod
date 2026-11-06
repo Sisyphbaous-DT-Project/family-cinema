@@ -12,6 +12,7 @@ require (
 	github.com/yapingcat/gomedia v0.0.0-20240906162731-17feea57090c
 	golang.org/x/net v0.48.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/text v0.41.0
 	golang.org/x/time v0.14.0
 )
@@ -99,7 +100,6 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/crypto v0.46.0 // indirect
 	golang.org/x/exp v0.0.0-20251113190631-e25ba8c21ef6 // indirect
-	golang.org/x/sys v0.40.0 // indirect
 	lukechampine.com/blake3 v1.1.6 // indirect
 	modernc.org/libc v1.22.3 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

@@ -3,6 +3,7 @@
 *.mod text eol=lf
 *.sum text eol=lf
 *.sh text eol=lf
+*.ps1 text eol=lf
 *.py text eol=lf
 *.ts text eol=lf
 *.js text eol=lf

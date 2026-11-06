@@ -15,6 +15,15 @@ const (
 	discoverReplyPrefix = "FAMILY_CINEMA"
 )
 
+func discoveryAllowed(listenAddr string) bool {
+	address := strings.TrimSpace(listenAddr)
+	if strings.EqualFold(address, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(address)
+	return ip == nil || !ip.IsLoopback()
+}
+
 // startDiscovery 启动局域网自动发现应答器。
 // App 在内网 UDP 广播 discoverMagic，这里收到后回复 "FAMILY_CINEMA|<http端口>|<web版本>"，
 // 让 App 在盒子 IP 变化（路由器重拨 / DHCP 重新分配）时也能自动找到服务，不用手填地址。

@@ -331,6 +331,7 @@ func (m *mediaProcManager) probePath(ctx context.Context, path string) (mediaPro
 	var probe mediaProbe
 	args := []string{"-v", "error", "-show_entries", "stream=index,codec_type,codec_name:stream_tags=language,title:stream_disposition=default,forced,attached_pic:format=duration", "-of", "json", path}
 	cmd := m.probeCommand(ctx, m.ffprobePath, args...)
+	mediaProcPrepare(cmd)
 	var stdout bytes.Buffer
 	stderr := newMediaTailBuffer(40, 64<<10)
 	cmd.Stdout = &stdout
@@ -350,6 +351,7 @@ func (m *mediaProcManager) probePath(ctx context.Context, path string) (mediaPro
 
 func (m *mediaProcManager) runFFmpeg(job *mediaProcJob, args []string, duration float64, converting bool) error {
 	cmd := m.command(job.ctx, m.ffmpegPath, args...)
+	mediaProcPrepare(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("启动 ffmpeg 失败: %v", err)

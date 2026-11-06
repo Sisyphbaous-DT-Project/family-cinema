@@ -2,6 +2,8 @@
 
 以下示例使用 `box.local` 和 `proxy.example.com` 作为占位地址，请换成自己的设备地址，不要照抄到生产配置。
 
+Windows 用户优先使用同一 Release 中的一键 EXE 与已签名 APK，见 [Windows 一键部署](windows-installation.md)。下面的参考盒子脚本不适用于普通 Windows 主机。
+
 ## 主服务配置
 
 将 `media-server/config.example.json` 复制为 `media-server/config.json`。程序优先读取可执行文件同目录的 `config.json`，其次读取当前工作目录的同名文件。
@@ -23,12 +25,15 @@
 | `btUPnP` | 是否尝试路由器 UPnP 端口映射 |
 | `anime` | 番剧聚合、规则目录和缓存配置 |
 | `media` | 声音转换与字幕提取（需要外部 ffmpeg/ffprobe，见下文） |
+| `pansou.enabled` / `pansou.url` | 是否启用盘搜及其服务地址，默认 `http://127.0.0.1:8888` |
 
 `rulesDir` 和 `cacheDir` 留空时，番剧模块使用可执行文件旁的 `rules/` 和 `anime-cache/`；规则已内嵌在二进制中。
 
 `anime.ruleSync` 默认开启：服务启动 2 分钟后、之后每天北京时间凌晨 4 点多，从 KazumiRules 的镜像（默认 gh-proxy.org 与 GitCode，可用 `anime.ruleSources` 换成自己的地址，以 `/` 结尾）检查规则。候选规则会先在本地验收 XPath、JSONPath、请求模板和引擎支持情况，合格才替换；不合格的站继续使用当前版本，并在设置页说明原因。每站换新前会把上一份通过验收的规则存进规则目录的 `previous/`，当前规则文件损坏时启动会尝试用它恢复。上游新增的站通过验收后才加入，所有镜像都不再列出的站自动下架；整套规则写进规则目录后热替换，不用重启。规则目录里有规则时只读目录、不再用内嵌的那份；想退回内嵌规则，关掉 `ruleSync` 并删掉规则目录后重启。设置页「播放源」里能看到上次检查结果，也能手动立即检查（接口 `GET/POST /api/anime/rules/sync`）。
 
 服务控制脚本只负责进程，不通过 `MEDIA_MOVIE_ROOT` 等环境变量配置媒体库；实际目录与端口以 `config.json` 或程序默认值为准。
+
+网页通过主服务的 `/api/pansou/search` 同源访问盘搜，`/api/features` 提供功能开关。Windows 安装器为盘搜分配本机端口，并禁用盘搜时隐藏搜索入口；原盒子配置没有 `pansou` 段时仍默认使用本机 8888。Windows 使用系统磁盘空间接口，转码工具命名为 `ffmpeg.exe` 和 `ffprobe.exe`，媒体处理恢复仅清理核实属于本服务的进程。
 
 ## 可选：声音转换与字幕（ffmpeg / ffprobe）
 

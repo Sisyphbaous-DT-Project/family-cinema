@@ -1,13 +1,45 @@
-// 网盘搜索：调盒子上独立运行的盘搜（PanSou，8888 端口，见 AGENTS §18）。
-// 它允许跨域，前端直接按"当前访问的盒子地址 + 8888"去调；开发时走 vite 代理 /pansou-api。
-// 盒子没梯子，只搜插件（各资源网站），不搜 Telegram 频道。
+// 网盘搜索由主服务转发到配置的盘搜；老版本主服务仍按原来的 8888 端口连接。
+import { ref } from 'vue'
 import { isOffline } from '../composables/cache'
 
-const PANSOU_PORT = 8888
+export const pansouEnabled = ref(true)
+let legacy = false
+let featuresPromise: Promise<boolean> | undefined
 
-function base(): string {
-  if (import.meta.env.DEV) return '/pansou-api'
-  return `${location.protocol}//${location.hostname}:${PANSOU_PORT}`
+export function loadPansouFeatures(): Promise<boolean> {
+  if (isOffline()) return Promise.resolve(false)
+  featuresPromise ??= (async () => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 5000)
+    try {
+      const res = await fetch('/api/features', { signal: ctrl.signal, cache: 'no-store' })
+      if (res.status === 404) {
+        legacy = true
+        return pansouEnabled.value
+      }
+      if (!res.ok) throw new Error('读取功能状态失败')
+      const data = await res.json() as { pansou?: boolean }
+      if (typeof data.pansou !== 'boolean') {
+        legacy = true
+        return pansouEnabled.value
+      }
+      pansouEnabled.value = data.pansou
+      legacy = false
+    } catch {
+      // 短暂断网不能把新服务误认成旧版，下次访问继续重试。
+      featuresPromise = undefined
+    } finally {
+      clearTimeout(timer)
+    }
+    return pansouEnabled.value
+  })()
+  return featuresPromise
+}
+
+function searchURL(): string {
+  if (!legacy) return '/api/pansou/search'
+  if (import.meta.env.DEV) return '/pansou-api/api/search'
+  return `${location.protocol}//${location.hostname}:8888/api/search`
 }
 
 export interface PanLink {
@@ -48,9 +80,10 @@ const KNOWN = new Set(PAN_TYPES.map((t) => t.key))
 
 export async function panSearch(kw: string, signal?: AbortSignal): Promise<PanResult> {
   if (isOffline()) throw new Error('没连上家里的网络，现在用不了网盘搜索')
+  if (!await loadPansouFeatures()) throw new Error('当前未安装盘搜，可在一键程序中勾选安装')
   let res: Response
   try {
-    res = await fetch(base() + '/api/search', {
+    res = await fetch(searchURL(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kw, res: 'merge', src: 'plugin' }),
@@ -58,7 +91,7 @@ export async function panSearch(kw: string, signal?: AbortSignal): Promise<PanRe
     })
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') throw e
-    throw new Error('网盘搜索暂时用不了，等一会儿再试试（盒子上的盘搜服务没开着）')
+    throw new Error('网盘搜索暂时无法连接，请检查盘搜是否正在运行')
   }
   if (!res.ok) throw new Error('网盘搜索出错了，等一会儿再试试')
   const body = (await res.json()) as { code?: number; message?: string; data?: { total?: number; merged_by_type?: Record<string, PanLink[]> } }

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { coverURL, epLabel, fetchLibrary, fmtSize, progKey, rescan, type DownloadingCard, type LocalCategory, type LocalItem } from '../api/local'
 import { api } from '../api/client'
 import { stopTask } from '../api/manage'
+import { loadPansouFeatures, pansouEnabled } from '../api/pansou'
 import { isLocalUpload, stopUpload } from '../composables/uploads'
 import { toast } from '../composables/snackbar'
 import { useServerTasks } from '../composables/serverTasks'
@@ -117,6 +118,7 @@ watch(serverTasks, (list) => {
 }, { immediate: true })
 
 onMounted(() => {
+  void loadPansouFeatures()
   refreshCacheMarks()
   load()
   document.addEventListener('visibilitychange', onVisible)
@@ -266,7 +268,7 @@ const continueList = computed<ContinueEntry[]>(() => {
     </TopAppBar>
 
     <div class="wrap">
-      <form v-if="cat === 'movie' && !offline" class="pansearch" data-hero="pansou" @submit.prevent="panSearch">
+      <form v-if="cat === 'movie' && !offline && pansouEnabled" class="pansearch" data-hero="pansou" @submit.prevent="panSearch">
         <Icon name="search" :size="22" class="psicon" />
         <input
           ref="panInput"
