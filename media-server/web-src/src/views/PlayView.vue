@@ -23,6 +23,7 @@ import FollowButton from '../components/FollowButton.vue'
 import { useAirtime } from '../composables/airtime'
 import { reportSource } from '../composables/follows'
 import { useEpisodeSizes } from '../composables/episodeSizes'
+import { accelText, toggleDownloadAcceleration } from '../composables/downloadAcceleration'
 
 const route = useRoute()
 const id = Number(route.params.id)
@@ -41,6 +42,14 @@ const sheet = ref(false)
 const kw = ref('')
 const pb = usePlayback(id, subject)
 const dl = useAnimeDownloads(pb)
+const accelBusy = ref(false)
+async function toggleAccel() {
+  const task = dl.activeTask.value
+  if (!task || accelBusy.value) return
+  accelBusy.value = true
+  if (await toggleDownloadAcceleration(task)) dl.refreshTasks()
+  accelBusy.value = false
+}
 // 顶部吸顶区（标题 + 播放器）：划过后下边缘出现渐隐带，内容不会被一刀切断
 const stickEl = ref<HTMLElement | null>(null)
 const stickScrolled = useScrolled(stickEl)
@@ -194,7 +203,7 @@ function onEnded() {
                 :badge="badge(st)"
                 :title="st.error"
                 @click="pb.chooseRule(st.rule.name, true)"
-              >{{ st.rule.name }}</Chip>
+              >{{ st.rule.name }}<span v-if="st.items.length" class="accelmark">支持下载加速</span></Chip>
             </div>
 
             <!-- 该片源搜到的作品（多个时可切换） -->
@@ -227,9 +236,16 @@ function onEnded() {
                   <span>{{ Math.round(dl.activeTask.value.progress || 0) }}%</span>
                 </div>
                 <div class="dlbar"><i :style="{ width: Math.min(100, dl.activeTask.value.progress || 0) + '%' }" /></div>
-                <div class="t-body-s muted">
-                  已完成 {{ dl.doneCount.value }} / {{ dl.activeTask.value.animeFiles?.length ?? 0 }} 集
-                  <span v-if="speedText(dl.activeTask.value.speedKBs)"> · {{ speedText(dl.activeTask.value.speedKBs) }}</span>
+                <div class="t-body-s muted dlmeta">
+                  <span>
+                    已完成 {{ dl.doneCount.value }} / {{ dl.activeTask.value.animeFiles?.length ?? 0 }} 集
+                    <span v-if="speedText(dl.activeTask.value.speedKBs)"> · {{ speedText(dl.activeTask.value.speedKBs) }}</span>
+                    <span v-if="accelText(dl.activeTask.value)"> {{ accelText(dl.activeTask.value) }}</span>
+                  </span>
+                  <Button
+                    variant="text" small :disabled="accelBusy || (!dl.activeTask.value.accelEnabled && dl.activeTask.value.accelSupported === false)"
+                    @click="toggleAccel"
+                  >{{ dl.activeTask.value.accelEnabled ? '关闭加速' : '下载加速' }}</Button>
                 </div>
               </div>
 
@@ -354,6 +370,9 @@ function onEnded() {
 .dltop > span:last-child { flex: none; }
 .dlbar { height: 6px; overflow: hidden; border-radius: 3px; background: var(--md-sys-color-surface-container-highest); }
 .dlbar i { display: block; height: 100%; border-radius: 3px; background: var(--md-sys-color-primary); transition: width var(--md-dur-long) var(--md-ease-standard); }
+.dlmeta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.dlmeta > span { min-width: 0; }
+.accelmark { margin-left: 2px; font-size: 10px; color: var(--md-sys-color-primary); white-space: nowrap; }
 .ep.picked { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); box-shadow: inset 0 0 0 2px var(--md-sys-color-primary); }
 .ep .lab { text-align: center; }
 .ep .sz { color: var(--md-sys-color-on-surface-variant); }

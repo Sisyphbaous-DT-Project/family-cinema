@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	animeapi "media-server/internal/anime/api"
@@ -54,7 +55,9 @@ type animeDLTask struct {
 	closing bool          // 已经收尾，不再接收追加的重试集（受 animeDL.mu 保护）
 	wake    chan struct{} // 追加重试集时叫醒正在收尾的下载工位
 	// 已经点了重试、还没轮到开始的集（受 animeDL.mu 保护）：防止连点两次把同一集排两遍
-	retrying map[string]bool
+	retrying   map[string]bool
+	accel      atomic.Bool   // 下载中也可切换；每集下一拍读取
+	accelSlots chan struct{} // 同一任务的两集共享 16 路总额度
 }
 
 var animeDL struct {
@@ -71,19 +74,21 @@ func initAnimeDownload(mux *http.ServeMux, a *animeapi.API) {
 	go animeDLWorker()
 	mux.HandleFunc("POST /api/anime/download", handleAnimeDownload)
 	mux.HandleFunc("POST /api/anime/download/{id}/retry", handleAnimeRetry)
+	mux.HandleFunc("POST /api/anime/download/{id}/accelerate", handleAnimeAccelerate)
 }
 
 // ---- 接口 ----
 
 type animeDLRequest struct {
-	Rule     string               `json:"rule"`
-	Ref      string               `json:"ref"`      // 作品来源（详情页地址或编号），解析时当 Referer 用
-	Title    string               `json:"title"`    // 番名
-	Category string               `json:"category"` // 新建文件夹时放哪类：series（默认）/ movie
-	Folder   string               `json:"folder"`   // 新建文件夹的名字（空则用番名）
-	TargetID string               `json:"targetId"` // 非空：并入这个已有条目的文件夹（分类跟着它）
-	Cover    *animeCoverSelection `json:"cover,omitempty"`
-	Episodes []struct {
+	Rule       string               `json:"rule"`
+	Ref        string               `json:"ref"`      // 作品来源（详情页地址或编号），解析时当 Referer 用
+	Title      string               `json:"title"`    // 番名
+	Category   string               `json:"category"` // 新建文件夹时放哪类：series（默认）/ movie
+	Folder     string               `json:"folder"`   // 新建文件夹的名字（空则用番名）
+	TargetID   string               `json:"targetId"` // 非空：并入这个已有条目的文件夹（分类跟着它）
+	Cover      *animeCoverSelection `json:"cover,omitempty"`
+	Accelerate bool                 `json:"accelerate,omitempty"`
+	Episodes   []struct {
 		Name  string `json:"name"`
 		URL   string `json:"url"`
 		Index int    `json:"index"` // 在这条线路里的位置（从 0 起），集名里认不出集数时用它
@@ -175,6 +180,8 @@ func handleAnimeDownload(w http.ResponseWriter, r *http.Request) {
 
 	t := newAnimeDLTask(rule, req.Ref, title, category, dir, eps)
 	t.cover = req.Cover
+	t.accel.Store(req.Accelerate)
+	t.info.AccelEnabled, t.info.AccelSupported = req.Accelerate, true
 	animeDL.mu.Lock()
 	animeDL.tasks = append([]*animeDLTask{t}, animeDL.tasks...)
 	trimAnimeDLHistory()
@@ -191,6 +198,38 @@ func writeAnimeDLError(w http.ResponseWriter, msg string) {
 	animeDLJSON(w, map[string]any{"ok": false, "error": msg})
 }
 
+// POST /api/anime/download/{id}/accelerate body: {"enabled":true}
+// 只改变后续工人的数量，不停止任务；已写好的分块和 MP4 前缀都保留。
+func handleAnimeAccelerate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+		writeAnimeDLError(w, "请求格式不对")
+		return
+	}
+	animeDL.mu.Lock()
+	defer animeDL.mu.Unlock()
+	for _, t := range animeDL.tasks {
+		if t.info.ID != r.PathValue("id") {
+			continue
+		}
+		if t.info.Status != "running" {
+			writeAnimeDLError(w, "任务已经结束了")
+			return
+		}
+		if req.Enabled && !t.info.AccelSupported {
+			writeAnimeDLError(w, t.info.AccelReason)
+			return
+		}
+		t.accel.Store(req.Enabled)
+		t.info.AccelEnabled = req.Enabled
+		animeDLJSON(w, map[string]any{"ok": true, "enabled": req.Enabled, "phones": len(animeDL.api.RelayNodes())})
+		return
+	}
+	writeAnimeDLError(w, "这个下载任务已经不在了")
+}
+
 // newAnimeDLTask 建一个排队中的番剧下载任务
 func newAnimeDLTask(rule *rules.Rule, ref, title, category, dir string, eps []animeDLEpisode) *animeDLTask {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -205,7 +244,7 @@ func newAnimeDLTask(rule *rules.Rule, ref, title, category, dir string, eps []an
 			AnimeRule: rule.Name, AnimeRef: ref, AnimeFiles: files,
 		},
 		rule: rule.Name, ruleObj: rule, ref: ref, eps: eps, ctx: ctx, cancel: cancel, queued: true,
-		wake: make(chan struct{}, 1), retrying: map[string]bool{},
+		wake: make(chan struct{}, 1), retrying: map[string]bool{}, accelSlots: make(chan struct{}, 16),
 	}
 }
 
@@ -254,7 +293,7 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 		writeAnimeDLError(w, "没有要重试的集")
 		return
 	}
-	name, dir, cover := t.info.Name, t.info.TargetDir, t.cover
+	name, dir, cover, accelEnabled := t.info.Name, t.info.TargetDir, t.cover, t.info.AccelEnabled
 	if t.info.Status == "running" && !t.closing {
 		// 已经在下载/等着拼/刚点过重试的集不再排第二遍，否则同一集会被同时下好几份
 		busy := make(map[string]bool, len(t.info.AnimeActive))
@@ -307,6 +346,8 @@ func handleAnimeRetry(w http.ResponseWriter, r *http.Request) {
 	}
 	nt := newAnimeDLTask(rule, ref, name, category, dir, eps)
 	nt.cover = cover
+	nt.accel.Store(accelEnabled)
+	nt.info.AccelEnabled, nt.info.AccelSupported = accelEnabled, true
 	animeDL.mu.Lock()
 	animeDL.tasks = append([]*animeDLTask{nt}, animeDL.tasks...)
 	trimAnimeDLHistory()
@@ -501,6 +542,7 @@ type animeDLSlot struct {
 	mergeFrac  float64
 	mergeFinal bool
 	bytes      int64
+	traffic    *accelTraffic
 }
 
 // animeDLRun 一个任务跑起来以后的汇总状态（受 animeDL.mu 保护）
@@ -525,6 +567,10 @@ func (r *animeDLRun) sync(x *TorrentTask) {
 	x.AnimeActive = x.AnimeActive[:0]
 	var parts []string
 	phone, downloading := false, false
+	now := time.Now()
+	accelSpeed, phoneSpeed := 0.0, 0.0
+	connections := 0
+	activePhones := map[string]bool{}
 	for _, a := range r.active {
 		sum += a.frac * 0.98
 		bytes += a.bytes
@@ -551,6 +597,20 @@ func (r *animeDLRun) sync(x *TorrentTask) {
 		if a.state == "running" {
 			downloading = true
 		}
+		if a.traffic != nil {
+			as, ps, _, conn := a.traffic.rates(now, a.state == "running")
+			accelSpeed += as
+			phoneSpeed += ps
+			connections += conn
+			for id := range a.traffic.recentPhones(now) {
+				activePhones[id] = true
+			}
+		}
+	}
+	x.AccelSpeedKBs, x.PhoneSpeedKBs = accelSpeed, phoneSpeed
+	x.AccelPhones, x.AccelConnections = len(activePhones), connections
+	if !x.AccelEnabled {
+		x.AccelSpeedKBs, x.PhoneSpeedKBs, x.AccelPhones = 0, 0, 0
 	}
 	x.Progress = sum / float64(total) * 100
 	x.BytesDone = bytes
@@ -560,7 +620,6 @@ func (r *animeDLRun) sync(x *TorrentTask) {
 			x.Stage += "，请打开手机上的 App"
 		}
 	}
-	now := time.Now()
 	if !downloading {
 		// 找地址、等拼接、拼接都不消耗下载带宽；重算基线，别让最后一次速度一直挂着。
 		x.SpeedKBs = 0
@@ -744,7 +803,8 @@ func runAnimeDLTask(t *animeDLTask) {
 				Fetch: func(ctx context.Context, rawURL, rng string) (*http.Response, error) {
 					return animeDL.api.Fetch(ctx, target, rawURL, rng)
 				},
-				URL: target.URL, Kind: kind, AdBlock: target.AdBlock, WorkDir: work, Out: out, Parallel: 3,
+				Accel: newEpisodeAcceleration(t, sl, target),
+				URL:   target.URL, Kind: kind, AdBlock: target.AdBlock, WorkDir: work, Out: out, Parallel: 3,
 				MergeSlot: animeDLMergeSlot,
 				OnProgress: func(p dl.Progress) {
 					run.set(func() {

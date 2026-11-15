@@ -60,6 +60,18 @@ type Candidate struct {
 }
 
 // Hub 嗅探任务中枢
+type RelayNode struct {
+	ID    string
+	Addr  string
+	Port  int
+	Token string
+}
+
+type workerInfo struct {
+	seen time.Time
+	node *RelayNode
+}
+
 type Hub struct {
 	// AliveWindow 多久没来 poll 就算助手离线；poll 间隔 25s + 单个任务最长约 20s，所以默认 60s
 	AliveWindow time.Duration
@@ -67,7 +79,7 @@ type Hub struct {
 	WaitTimeout time.Duration
 
 	mu      sync.Mutex
-	workers map[string]time.Time
+	workers map[string]workerInfo
 	pending map[string]chan Result
 	jobs    chan *Job
 	seq     uint64
@@ -78,7 +90,7 @@ func NewHub() *Hub {
 	return &Hub{
 		AliveWindow: 60 * time.Second,
 		WaitTimeout: 28 * time.Second,
-		workers:     map[string]time.Time{},
+		workers:     map[string]workerInfo{},
 		pending:     map[string]chan Result{},
 		jobs:        make(chan *Job, 64),
 	}
@@ -86,8 +98,41 @@ func NewHub() *Hub {
 
 func (h *Hub) touch(id string) {
 	h.mu.Lock()
-	h.workers[id] = time.Now()
+	w := h.workers[id]
+	w.seen = time.Now()
+	h.workers[id] = w
 	h.mu.Unlock()
+}
+
+// RegisterNode 手机每次轮询都登记最新代取地址和令牌；地址由 HTTP 对端填写。
+func (h *Hub) RegisterNode(id, addr string, port int, token string) {
+	h.mu.Lock()
+	w := h.workers[id]
+	w.seen = time.Now()
+	if addr != "" && port > 0 && token != "" {
+		w.node = &RelayNode{ID: id, Addr: addr, Port: port, Token: token}
+	} else {
+		w.node = nil
+	}
+	h.workers[id] = w
+	h.mu.Unlock()
+}
+
+// RelayNodes 返回最近在线、且已注册代取服务的全部手机。
+func (h *Hub) RelayNodes() []RelayNode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []RelayNode
+	for id, w := range h.workers {
+		if time.Since(w.seen) > h.AliveWindow {
+			delete(h.workers, id)
+			continue
+		}
+		if w.node != nil {
+			out = append(out, *w.node)
+		}
+	}
+	return out
 }
 
 // Online 在线的助手数量（顺便清掉离线的）
@@ -95,8 +140,8 @@ func (h *Hub) Online() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	n := 0
-	for id, t := range h.workers {
-		if time.Since(t) <= h.AliveWindow {
+	for id, w := range h.workers {
+		if time.Since(w.seen) <= h.AliveWindow {
 			n++
 		} else {
 			delete(h.workers, id)

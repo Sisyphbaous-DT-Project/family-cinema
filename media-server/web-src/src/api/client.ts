@@ -70,11 +70,16 @@ export const api = {
     targetId: string
     episodes: { name: string; url: string; index: number }[]
     cover?: AnimeDownloadCover | null
+    accelerate?: boolean
   }): Promise<{ ok: boolean; id?: string; queued: number; skipped: number; dir: string }> => post('/download', p),
   /** 重试下载失败的几集；files 为空 = 所有失败的集 */
   retryDownload: (taskId: string, files: string[] = []) =>
     post<{ ok: boolean; id?: string; queued: number; dir?: string; error?: string }>(
       `/download/${encodeURIComponent(taskId)}/retry`, { files },
+    ),
+  setDownloadAcceleration: (taskId: string, enabled: boolean) =>
+    post<{ ok: boolean; enabled?: boolean; phones?: number; error?: string }>(
+      `/download/${encodeURIComponent(taskId)}/accelerate`, { enabled },
     ),
   workerStatus: () => get<{ online: number }>('/worker/status'),
 }

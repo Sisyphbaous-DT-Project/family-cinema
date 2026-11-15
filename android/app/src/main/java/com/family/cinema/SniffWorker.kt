@@ -89,6 +89,11 @@ class SniffWorker(ctx: Context, private val prefs: SharedPreferences) {
                 val conn = URL("$base/api/anime/worker/poll?id=$deviceId").openConnection() as HttpURLConnection
                 conn.connectTimeout = 5000
                 conn.readTimeout = 35000 // 盒子最长 25 秒才会回复 204
+                // 每次轮询都登记最新代取节点；令牌短期有效，盒子按真实对端 IP 记录地址。
+                if (relay.port > 0) {
+                    conn.setRequestProperty("X-Relay-Port", relay.port.toString())
+                    conn.setRequestProperty("X-Relay-Token", relay.newTicket())
+                }
                 if (conn.responseCode == 200) {
                     val job = JSONObject(conn.inputStream.bufferedReader().readText())
                     report(base, runJob(job))

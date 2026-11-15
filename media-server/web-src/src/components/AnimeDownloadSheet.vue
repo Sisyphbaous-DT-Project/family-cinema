@@ -6,6 +6,7 @@ import { toast } from '../composables/snackbar'
 import BottomSheet from './m3/BottomSheet.vue'
 import Button from './m3/Button.vue'
 import SegmentedButton from './m3/SegmentedButton.vue'
+import Switch from './m3/Switch.vue'
 import FolderPicker from './manage/FolderPicker.vue'
 
 const props = defineProps<{
@@ -36,6 +37,7 @@ const folder = ref('')
 const target = ref<FolderItem | null>(null)
 const picker = ref<InstanceType<typeof FolderPicker>>()
 const busy = ref(false)
+const accelerate = ref(false)
 const err = ref('')
 
 watch(() => props.modelValue, (v) => {
@@ -45,6 +47,7 @@ watch(() => props.modelValue, (v) => {
   folder.value = props.title
   target.value = null
   busy.value = false
+  accelerate.value = false
   err.value = ''
 })
 
@@ -73,6 +76,7 @@ async function submit() {
       targetId: dest.value === 'existing' ? target.value!.id : '',
       episodes: props.episodes,
       cover: props.cover,
+      accelerate: accelerate.value,
     })
     if (!r.ok) throw new Error('提交失败，请再试一次')
     open.value = false
@@ -99,6 +103,14 @@ async function submit() {
       <p v-if="diskFree" class="t-body-m disk" :class="{ bad: tooBig }">
         {{ tooBig ? '盒子硬盘快不够了：' : '' }}盒子硬盘还剩 {{ diskFree }}{{ tooBig ? '，下到一半可能会停，建议先少选几集' : '' }}
       </p>
+
+      <div class="accel">
+        <div class="grow">
+          <div class="t-body-l">下载加速</div>
+          <div class="t-body-s muted">盒子分段下载，在线手机也会通过家里 WiFi 一起帮忙；不使用手机流量</div>
+        </div>
+        <Switch v-model="accelerate" :disabled="busy" />
+      </div>
 
       <SegmentedButton
         :model-value="dest"
@@ -134,6 +146,8 @@ async function submit() {
 .intro { margin: 0; }
 .disk { margin: -4px 0 0; color: var(--md-sys-color-on-surface-variant); }
 .disk.bad { color: var(--md-sys-color-error, #ba1a1a); font-weight: 600; }
+.accel { display: flex; align-items: center; gap: 16px; padding: 12px 14px; border-radius: var(--md-shape-md); background: var(--md-sys-color-surface-container-low); }
+.accel .muted { margin-top: 4px; line-height: 1.45; }
 .field { display: flex; flex-direction: column; gap: 8px; }
 .textin { box-sizing: border-box; width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid var(--md-sys-color-outline); border-radius: var(--md-shape-md); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-size: 16px; }
 .textin:focus { outline: none; border-color: var(--md-sys-color-primary); box-shadow: 0 0 0 1px var(--md-sys-color-primary); }

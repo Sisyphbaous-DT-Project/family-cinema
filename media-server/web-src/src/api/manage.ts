@@ -24,6 +24,13 @@ export interface Task {
   status: string // running | done | error | stopped | processing
   progress: number
   speedKBs: number
+  accelEnabled?: boolean
+  accelSupported?: boolean
+  accelReason?: string
+  accelSpeedKBs?: number
+  phoneSpeedKBs?: number
+  accelPhones?: number
+  accelConnections?: number
   peers: number
   bytesDone: number
   bytesTotal: number

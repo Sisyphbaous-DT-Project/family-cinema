@@ -12,6 +12,7 @@ import { isOffline, refreshCacheMarks } from '../composables/cache'
 import { hasBridge } from '../composables/bridge'
 import { appUpdate, startAppUpdate } from '../composables/appUpdate'
 import { getProg } from '../composables/progress'
+import { accelText, toggleDownloadAcceleration } from '../composables/downloadAcceleration'
 import TopAppBar from '../components/m3/TopAppBar.vue'
 import IconButton from '../components/m3/IconButton.vue'
 import Button from '../components/m3/Button.vue'
@@ -100,6 +101,13 @@ watch(serverTasks, (list) => {
       category: cat,
       progress: t.progress,
       speedKBs: t.speedKBs,
+      accelEnabled: t.accelEnabled,
+      accelSupported: t.accelSupported,
+      accelReason: t.accelReason,
+      accelSpeedKBs: t.accelSpeedKBs,
+      phoneSpeedKBs: t.phoneSpeedKBs,
+      accelPhones: t.accelPhones,
+      accelConnections: t.accelConnections,
       status: t.status,
       stage: t.stage,
       sourceIP: t.sourceIP,
@@ -139,7 +147,7 @@ const pct = (p: number) => Math.max(0, Math.min(100, Math.round(p || 0)))
 
 /** 盒子任务的状态，写成大白话 */
 function dlText(d: DownloadingCard): string {
-  const speed = d.speedKBs > 0 ? ` · 每秒 ${fmtSize(d.speedKBs * 1024)}` : ''
+  const speed = d.speedKBs > 0 ? ` · 每秒 ${fmtSize(d.speedKBs * 1024)}${accelText(d) ? ` ${accelText(d)}` : ''}` : (accelText(d) ? ` · ${accelText(d)}` : '')
   if (d.kind === 'upload') {
     const source = d.sourceIP ? ` · 来自 ${d.sourceIP}` : ''
     return `正在上传 ${d.title} · ${pct(d.progress)}%${speed}${source}`
@@ -156,6 +164,14 @@ function dlText(d: DownloadingCard): string {
   }
   if (d.status === 'processing') return d.stage || '下载好了，正在整理…'
   return `已下载 ${pct(d.progress)}%` + (d.speedKBs > 0 ? `，每秒 ${fmtSize(d.speedKBs * 1024)}` : '')
+}
+
+const accelBusy = ref('')
+async function toggleAccel(d: DownloadingCard) {
+  if (accelBusy.value) return
+  accelBusy.value = d.taskId
+  if (await toggleDownloadAcceleration({ ...d, id: d.taskId })) refreshTasks()
+  accelBusy.value = ''
 }
 
 const stopping = ref('')
@@ -321,8 +337,12 @@ const continueList = computed<ContinueEntry[]>(() => {
             <div class="t-body-l clamp-1">{{ d.title }}</div>
             <div class="progress"><i :style="{ width: pct(d.progress) + '%' }" /></div>
             <div class="t-body-m muted">{{ dlText(d) }}</div>
-            <div v-if="d.kind === 'upload' || d.kind === 'media'" class="dacts">
-              <Button variant="text" small danger :disabled="stopping === d.taskId" @click="stopCard(d)">
+            <div v-if="d.kind === 'upload' || d.kind === 'media' || d.animeFiles?.length" class="dacts">
+              <Button
+                v-if="d.animeFiles?.length && (d.accelEnabled || d.accelSupported !== false)"
+                variant="text" small :disabled="accelBusy === d.taskId" @click="toggleAccel(d)"
+              >{{ d.accelEnabled ? '关闭加速' : '下载加速' }}</Button>
+              <Button v-if="d.kind === 'upload' || d.kind === 'media'" variant="text" small danger :disabled="stopping === d.taskId" @click="stopCard(d)">
                 {{ stopping === d.taskId ? '停止中…' : '停止任务' }}
               </Button>
             </div>

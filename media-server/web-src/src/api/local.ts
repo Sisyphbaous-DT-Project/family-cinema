@@ -52,6 +52,13 @@ export interface DownloadingCard {
   category: LocalCategory
   progress: number
   speedKBs: number
+  accelEnabled?: boolean
+  accelSupported?: boolean
+  accelReason?: string
+  accelSpeedKBs?: number
+  phoneSpeedKBs?: number
+  accelPhones?: number
+  accelConnections?: number
   status: string
   stage?: string
   sourceIP?: string

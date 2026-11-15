@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,12 @@ func (a *API) handleWorkerPoll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "缺少设备 id")
 		return
 	}
+	host := ""
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	port, _ := strconv.Atoi(r.Header.Get("X-Relay-Port"))
+	a.hub.RegisterNode(id, host, port, r.Header.Get("X-Relay-Token"))
 	job := a.hub.Poll(r.Context(), id, 25*time.Second)
 	if job == nil {
 		w.WriteHeader(http.StatusNoContent)

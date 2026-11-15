@@ -12,7 +12,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +43,7 @@ type Options struct {
 	Out        string // 下好的 mp4 写到这里
 	Parallel   int    // 同时下几段，默认 3（和 Kazumi 一样）
 	OnProgress func(Progress)
+	Accel      *Acceleration // 可空：普通下载；不空时 MP4 可分块，HLS 可动态增加通道
 	// MergeSlot 拼接要排队时传一个容量为 1 的通道（几集同时下载、共用一个）：
 	// 拼接主要在读写硬盘，盒子的移动硬盘两集同时拼反而更慢、整台盒子都会卡；nil 表示不排队
 	MergeSlot chan struct{}
@@ -98,11 +98,17 @@ func Download(ctx context.Context, opt Options) (func() error, error) {
 		return nil, err
 	}
 	if opt.Kind == "mp4" {
+		if opt.Accel != nil {
+			return directRanged(ctx, opt, opt.URL)
+		}
 		return direct(ctx, opt, opt.URL)
 	}
 	body, err := fetchPlaylist(ctx, opt.Fetch, opt.URL)
 	if errors.Is(err, errNotM3U8) {
 		// 解析时以为是 m3u8，实际是整个视频文件：退回整文件下载（Kazumi 也是这样）
+		if opt.Accel != nil {
+			return directRanged(ctx, opt, opt.URL)
+		}
 		return direct(ctx, opt, opt.URL)
 	}
 	if err != nil {
@@ -191,47 +197,27 @@ func hlsDownload(ctx context.Context, opt Options, body string) (func() error, e
 	}
 	report()
 
-	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		firstErr error
-		sem      = make(chan struct{}, opt.Parallel)
-	)
-	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	for _, i := range todo {
-		select {
-		case sem <- struct{}{}:
-		case <-cctx.Done():
-		}
-		if cctx.Err() != nil {
-			break
-		}
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			n, err := fetchSegment(cctx, opt.Fetch, segs[i], keys, paths[i], !fmp4)
-			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = fmt.Errorf("第 %d 段下载失败：%w", i+1, err)
-				}
-				mu.Unlock()
-				cancel() // 有一段怎么都下不下来，整集就算失败，别的段也不用下了
-				return
-			}
-			done.Add(1)
-			bytesDone.Add(n)
-			report()
-		}(i)
+	accel := opt.Accel
+	if accel == nil {
+		accel = &Acceleration{NormalParallel: opt.Parallel}
+	} else {
+		accel.NormalParallel = opt.Parallel
+		accel.BoxParallel = 6
+		accel.PhoneParallel = 2
+		accel.support(true)
 	}
-	wg.Wait()
-	if err := ctx.Err(); err != nil {
+	err = runDynamic(ctx, accel, todo, opt.Fetch, func(cctx context.Context, i int, fetch Fetcher) error {
+		n, err := fetchSegment(cctx, fetch, segs[i], keys, paths[i], !fmp4)
+		if err != nil {
+			return fmt.Errorf("第 %d 段下载失败：%w", i+1, err)
+		}
+		done.Add(1)
+		bytesDone.Add(n)
+		report()
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	if firstErr != nil {
-		return nil, firstErr
 	}
 
 	p := Progress{Done: len(segs), Total: len(segs), Bytes: bytesDone.Load()}

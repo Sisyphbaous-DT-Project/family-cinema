@@ -63,22 +63,29 @@ type SpeedResult struct {
 
 // TorrentTask 下载任务
 type TorrentTask struct {
-	ID         string   `json:"id"`
-	Kind       string   `json:"kind,omitempty"`
-	SourceIP   string   `json:"sourceIP,omitempty"`
-	NextTaskID string   `json:"nextTaskId,omitempty"`
-	Magnet     string   `json:"magnet"`
-	Name       string   `json:"name"`
-	Category   string   `json:"category"` // movie | series
-	TargetDir  string   `json:"targetDir"`
-	Status     string   `json:"status"`          // running | processing | done | error | stopped
-	Stage      string   `json:"stage,omitempty"` // 当前阶段说明（下载中/解压中/校验中）
-	Progress   float64  `json:"progress"`
-	SpeedKBs   float64  `json:"speedKBs"`
-	BytesDone  int64    `json:"bytesDone"`
-	BytesTotal int64    `json:"bytesTotal"`
-	Peers      int      `json:"peers"`
-	Files      []string `json:"files,omitempty"`
+	ID               string   `json:"id"`
+	Kind             string   `json:"kind,omitempty"`
+	SourceIP         string   `json:"sourceIP,omitempty"`
+	NextTaskID       string   `json:"nextTaskId,omitempty"`
+	Magnet           string   `json:"magnet"`
+	Name             string   `json:"name"`
+	Category         string   `json:"category"` // movie | series
+	TargetDir        string   `json:"targetDir"`
+	Status           string   `json:"status"`          // running | processing | done | error | stopped
+	Stage            string   `json:"stage,omitempty"` // 当前阶段说明（下载中/解压中/校验中）
+	Progress         float64  `json:"progress"`
+	SpeedKBs         float64  `json:"speedKBs"`
+	AccelEnabled     bool     `json:"accelEnabled,omitempty"`
+	AccelSupported   bool     `json:"accelSupported,omitempty"`
+	AccelReason      string   `json:"accelReason,omitempty"`
+	AccelSpeedKBs    float64  `json:"accelSpeedKBs,omitempty"`
+	PhoneSpeedKBs    float64  `json:"phoneSpeedKBs,omitempty"`
+	AccelPhones      int      `json:"accelPhones,omitempty"`
+	AccelConnections int      `json:"accelConnections,omitempty"`
+	BytesDone        int64    `json:"bytesDone"`
+	BytesTotal       int64    `json:"bytesTotal"`
+	Peers            int      `json:"peers"`
+	Files            []string `json:"files,omitempty"`
 	// 番剧下载的逐集状态：前端按片源和作品匹配当前页面，File 统一为"第NN集.mp4"
 	AnimeRule        string          `json:"animeRule,omitempty"`
 	AnimeRef         string          `json:"animeRef,omitempty"`

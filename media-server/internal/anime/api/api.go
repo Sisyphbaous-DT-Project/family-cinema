@@ -169,6 +169,9 @@ func (a *API) Fetch(ctx context.Context, t hls.Target, rawURL, rng string) (*htt
 	return a.proxy.Open(ctx, http.MethodGet, t, rng)
 }
 
+// RelayNodes 返回当前可用于下载加速的全部手机节点。
+func (a *API) RelayNodes() []sniff.RelayNode { return a.hub.RelayNodes() }
+
 // Register 把路由挂到 mux 上
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/anime/hot", a.handleHot)

@@ -6,6 +6,7 @@ import { api } from '../../api/client'
 import { toast } from '../../composables/snackbar'
 import { useServerTasks } from '../../composables/serverTasks'
 import { isLocalUpload, stopUpload } from '../../composables/uploads'
+import { accelText, toggleDownloadAcceleration } from '../../composables/downloadAcceleration'
 import TopAppBar from '../../components/m3/TopAppBar.vue'
 import Button from '../../components/m3/Button.vue'
 import Icon from '../../components/m3/Icon.vue'
@@ -34,6 +35,14 @@ const statusText = (t: Task) => {
 
 const speedText = (t: Task) =>
   t.speedKBs ? (t.speedKBs > 1024 ? (t.speedKBs / 1024).toFixed(2) + ' MB/s' : Math.round(t.speedKBs) + ' KB/s') : ''
+
+const accelBusy = ref('')
+async function toggleAccel(t: Task) {
+  if (accelBusy.value) return
+  accelBusy.value = t.id
+  if (await toggleDownloadAcceleration(t)) load()
+  accelBusy.value = ''
+}
 
 async function stop(t: Task) {
   try {
@@ -109,7 +118,8 @@ async function retryEp(t: Task, file: string) {
         <div class="t-body-s muted facts">
           <span v-if="t.bytesTotal">{{ fmtSize(t.bytesDone) }} / {{ fmtSize(t.bytesTotal) }}</span>
           <span v-else-if="t.bytesDone">{{ t.kind === 'upload' ? '已上传' : '已下载' }} {{ fmtSize(t.bytesDone) }}</span>
-          <span v-if="speedText(t)">{{ speedText(t) }}</span>
+          <span v-if="speedText(t)">{{ speedText(t) }} {{ accelText(t) }}</span>
+          <span v-else-if="accelText(t)">{{ accelText(t) }}</span>
           <span v-if="t.peers">{{ t.peers }} 节点</span>
           <span v-if="t.sourceIP">来自 {{ t.sourceIP }}</span>
         </div>
@@ -139,8 +149,12 @@ async function retryEp(t: Task, file: string) {
         <p v-if="t.kind === 'media' && t.status === 'done' && t.stage" class="t-body-s muted stagetext">{{ t.stage }}</p>
         <p v-if="t.error" class="t-body-s err">{{ t.error }}</p>
         <p v-if="t.status === 'done' && t.targetDir" class="t-body-s muted clamp-1">{{ t.targetDir }}</p>
-        <div v-if="canStop(t)" class="acts">
-          <Button variant="text" small danger @click="stop(t)">停止任务</Button>
+        <div v-if="canStop(t) || (isActive(t) && t.animeRule)" class="acts">
+          <Button
+            v-if="isActive(t) && t.animeRule && (t.accelEnabled || t.accelSupported !== false)"
+            variant="text" small :disabled="accelBusy === t.id" @click="toggleAccel(t)"
+          >{{ t.accelEnabled ? '关闭加速' : '下载加速' }}</Button>
+          <Button v-if="canStop(t)" variant="text" small danger @click="stop(t)">停止任务</Button>
         </div>
       </div>
     </div>
@@ -156,12 +170,12 @@ async function retryEp(t: Task, file: string) {
 .bar { height: 4px; border-radius: 2px; background: var(--md-sys-color-surface-container-highest); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--md-sys-color-primary); transition: width var(--md-dur-long) linear; }
 .bar i.done { background: var(--md-sys-color-primary); }
-.facts { display: flex; gap: 12px; }
+.facts { display: flex; gap: 12px; flex-wrap: wrap; }
 .stagetext { margin: 0; }
 .err { color: var(--md-sys-color-error, #ba1a1a); margin: 0; }
 .st-error { color: var(--md-sys-color-error, #ba1a1a); }
 .st-done { color: var(--md-sys-color-primary); }
-.acts { display: flex; justify-content: flex-end; }
+.acts { display: flex; justify-content: flex-end; gap: 8px; }
 .fails { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--md-sys-color-surface-container-low); }
 .failrow { display: flex; align-items: center; gap: 8px; }
 .failrow .t-body-s:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
