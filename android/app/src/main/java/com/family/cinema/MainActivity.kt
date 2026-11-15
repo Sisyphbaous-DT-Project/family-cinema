@@ -238,6 +238,15 @@ class MainActivity : AppCompatActivity() {
     // 网页层没有隐藏系统栏的权限，只能由原生做。
     private fun applyImmersive(on: Boolean) {
         val ctrl = androidx.core.view.WindowCompat.getInsetsController(window, window.decorView)
+        // 隐藏系统栏后，默认模式仍可能给横屏短边的摄像头开孔留黑带；全屏视频允许铺进去
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = if (on)
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            else
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            window.attributes = lp
+        }
         if (on) {
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
             ctrl.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
